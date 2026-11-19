@@ -230,14 +230,21 @@ async function openThread(key, hit) {
   for (const m of data) {
     const files = await api("attachments", { id: m.id });
     if (token !== readerVersion) return;
-    const [body, quote] = splitQuote(m.body);
+    const body = splitQuote(m.body)
+      .map(({ quoted, text }) => {
+        const block = "<pre>" + h(text) + "</pre>";
+        return quoted
+          ? "<details><summary>Цитата</summary>" + block + "</details>"
+          : block;
+      })
+      .join("");
     let art = document.createElement("article");
     art.className =
       "bubble" +
       (m.outgoing ? " out" : "") +
       (m.id === hit && $("search").value ? " hit" : "");
     art.id = "msg" + m.id;
-    art.innerHTML = `<strong>${h(m.sender)}</strong><div class="meta">Кому: ${h(m.recipients)} · ${h(date(m.stamp))}</div><pre>${h(body)}</pre>${quote ? "<details><summary>Цитата</summary><pre>" + h(quote) + "</pre></details>" : ""}<div class="parts"></div><div class="actions"></div>`;
+    art.innerHTML = `<strong>${h(m.sender)}</strong><div class="meta">Кому: ${h(m.recipients)} · ${h(date(m.stamp))}</div><div class="plain-body">${body}</div><div class="parts"></div><div class="actions"></div>`;
     const btn = (parent, text, fn) => {
       let b = document.createElement("button");
       b.textContent = text;
@@ -301,7 +308,7 @@ async function htmlView(art, m, files, remote) {
   frame.srcdoc =
     `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: ${remote ? "https:" : ""}; style-src 'unsafe-inline'"><meta name="referrer" content="no-referrer"><style>body{font:15px system-ui;overflow-wrap:anywhere}img{max-width:100%}</style>` +
     template.innerHTML;
-  art.querySelector("pre").hidden = true;
+  art.querySelector(".plain-body").hidden = true;
   art.append(frame);
 }
 function accountDialog(edit) {
