@@ -81,6 +81,7 @@ pub fn enqueue(c: &mut Connection, d: Compose) -> Result<usize> {
     }
     let t = c.transaction()?;
     let count = groups.len();
+    let batch = store::id();
     for group in groups {
         let mut builder = Message::builder()
             .message_id(Some(format!(
@@ -122,13 +123,14 @@ pub fn enqueue(c: &mut Connection, d: Compose) -> Result<usize> {
             .collect::<Vec<_>>()
             .join(", ");
         t.execute(
-            "INSERT INTO queue VALUES(?,?,?,?,'pending','',?)",
+            "INSERT INTO queue VALUES(?,?,?,?,'pending','',?,?)",
             params![
                 store::id(),
                 a.id,
                 recipients,
                 message.formatted(),
-                store::now()
+                store::now(),
+                batch
             ],
         )?;
     }
@@ -137,13 +139,28 @@ pub fn enqueue(c: &mut Connection, d: Compose) -> Result<usize> {
     Ok(count)
 }
 pub fn dispatch(c: &mut Connection, profile: &str) -> Result<()> {
+    // The OS releases this lock even if the process exits during SMTP DATA.
+    let path =
+        std::path::Path::new(c.path().context("Нет пути профиля")?).with_extension("send-lock");
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)?;
+    match lock.try_lock() {
+        Ok(()) => (),
+        Err(std::fs::TryLockError::WouldBlock) => return Ok(()),
+        Err(std::fs::TryLockError::Error(e)) => return Err(e.into()),
+    }
+    c.execute("UPDATE queue SET state='unknown',error='Приложение закрылось до сохранения подтверждения' WHERE state='sending'",[])?;
     let jobs = c
         .prepare("SELECT id FROM queue WHERE state='pending' ORDER BY rowid")?
         .query_map([], |r| r.get::<_, String>(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     for id in jobs {
         send_one(c, &id, |a, env, raw| {
-            let pw = network::secret(profile, &a.id, "out", None)
+            let pw = network::secret(profile, a, "out", None)
                 .map_err(|e| ("failed", format!("{e:#}")))?;
             let transport = network::smtp(a, &pw).map_err(|e| ("failed", e.to_string()))?;
             transport

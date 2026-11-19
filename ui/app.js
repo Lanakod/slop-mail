@@ -13,6 +13,7 @@ let pid = "",
 let selection = { account: "", folder: "" },
   syncProfile = "";
 let draftWrites = Promise.resolve();
+const ask = (text) => api("confirm", { text });
 const status = (t) => {
   $("status").textContent = t;
   $("status").title = t;
@@ -92,6 +93,11 @@ async function switchProfile() {
   localStorage.setItem("profile", pid);
   thread = "";
   readerVersion++;
+  listVersion++;
+  $("threads").innerHTML = empty("Загрузка почты…");
+  $("folders").replaceChildren();
+  $("filters").replaceChildren();
+  $("addresses").replaceChildren();
   selection = { account: "", folder: "" };
   $("search").value = "";
   $("reader").innerHTML = empty("Выберите переписку");
@@ -107,6 +113,7 @@ async function switchProfile() {
     profileDialog();
     return;
   }
+  status("Открытие профиля…");
   const data = await Promise.all(
     ["accounts", "folders", "contacts"].map((op) => api(op, {}, active)),
   );
@@ -259,7 +266,7 @@ async function openThread(key, hit) {
     btn(actions, "Ответить", () => composer($("quick"), m, false, true));
     btn(actions, "Ответить всем", () => composer($("quick"), m, true, true));
     btn(actions, "Удалить локально", async () => {
-      if (!confirm("Удалить локальную копию письма?")) return;
+      if (!(await ask("Удалить локальную копию письма?"))) return;
       await api("delete", { id: m.id });
       await list();
       if (data.length > 1) await openThread(key, null);
@@ -514,9 +521,9 @@ async function composer(host, parent, all, retarget) {
       let to = await api("preview", { to: d.to }, active);
       const from = accounts.find((a) => a.id === d.account)?.address;
       if (
-        !confirm(
+        !(await ask(
           `От: ${from}\nПолучателей: ${to.length}\n${d.personal ? "У каждого в поле To только собственный адрес" : "Всем видны адреса: " + to.join(", ")}\nОтправить?`,
-        )
+        ))
       )
         return;
       await api("enqueue", d, active);
@@ -565,6 +572,8 @@ async function synchronize(active) {
   syncProfile = active;
   const batch = [...accounts];
   const errors = [];
+  if (!folders.length && batch.length)
+    $("threads").innerHTML = empty("Первичное получение почты…");
   for (const a of batch) {
     if (pid !== active) break;
     status("Получение почты · " + a.address);
@@ -606,7 +615,7 @@ async function contacts() {
       $("cemails").value = p.emails;
     };
     row.querySelectorAll("button")[1].onclick = action(async () => {
-      if (confirm("Удалить контакт?")) {
+      if (await ask("Удалить контакт?")) {
         await api("remove_contact", { id: p.id });
         await contacts();
       }
@@ -635,7 +644,20 @@ async function queue() {
     "Очередь отправки",
     `<div class="hint">Принято сервером: ${jobs.filter((j) => j.state === "sent").length} из ${jobs.length}</div><div id="jobs"></div><button id="reload">Обновить</button>`,
   );
+  let batch = "";
   for (const j of jobs) {
+    if (j.batch !== batch) {
+      batch = j.batch;
+      const group = jobs.filter((x) => x.batch === batch);
+      let heading = document.createElement("h3");
+      heading.textContent =
+        date(j.created) +
+        " · Принято " +
+        group.filter((x) => x.state === "sent").length +
+        " / " +
+        group.length;
+      $("jobs").append(heading);
+    }
     let row = document.createElement("div");
     row.className = "entry";
     row.innerHTML = `<strong>${h(j.recipients)}</strong><p>${h(states[j.state])} · ${h(accounts.find((a) => a.id === j.account)?.address)}</p><small>${h(j.error)}</small>`;
@@ -645,7 +667,7 @@ async function queue() {
       b.onclick = action(async () => {
         if (
           j.state === "unknown" &&
-          !confirm("Сервер мог принять письмо. Отправить повторно?")
+          !(await ask("Сервер мог принять письмо. Отправить повторно?"))
         )
           return;
         await api("retry", { id: j.id });
@@ -657,6 +679,12 @@ async function queue() {
     $("jobs").append(row);
   }
   click("reload", queue);
+  if (jobs.some((j) => ["pending", "sending"].includes(j.state))) {
+    const panel = $("jobs");
+    setTimeout(() => {
+      if (panel.isConnected && $("dialog").open) queue().catch(err);
+    }, 1200);
+  }
 }
 click("profiles", profileDialog);
 click("add", () => accountDialog(null));

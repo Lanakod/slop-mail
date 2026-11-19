@@ -11,8 +11,23 @@ use std::{
     net::{TcpStream, ToSocketAddrs},
     time::Duration,
 };
-pub fn secret(profile: &str, a: &str, side: &str, value: Option<&str>) -> Result<String> {
-    let e = keyring::Entry::new("org.slopmail.desktop", &format!("{profile}/{a}/{side}"))?;
+pub fn secret(profile: &str, a: &Account, side: &str, value: Option<&str>) -> Result<String> {
+    let (server, login) = if side == "in" {
+        (&a.incoming, &a.login)
+    } else {
+        (&a.outgoing, &a.smtp_login)
+    };
+    let key = serde_json::to_string(&(
+        profile,
+        &a.id,
+        side,
+        &server.proto,
+        &server.host,
+        server.port,
+        &server.tls,
+        login,
+    ))?;
+    let e = keyring::Entry::new("org.slopmail.desktop", &key)?;
     if let Some(v) = value.filter(|v| !v.is_empty()) {
         e.set_password(v)?;
         Ok(v.into())
@@ -112,6 +127,10 @@ pub fn imap_sync<T: Read + Write>(
             .optional()?;
         if old.is_some_and(|v| v != valid) {
             t.execute(
+                "DELETE FROM hidden WHERE account=? AND folder=?",
+                params![a.id, folder],
+            )?;
+            t.execute(
                 "DELETE FROM messages WHERE account=? AND folder=?",
                 params![a.id, folder],
             )?;
@@ -139,7 +158,36 @@ pub fn imap_sync<T: Read + Write>(
             let uid = uid.to_string();
             remote.insert(uid.clone());
             let seen = record.flags().contains(&imap::types::Flag::Seen);
-            if c.execute("UPDATE messages SET seen=CASE WHEN pending_seen=1 THEN 1 ELSE ? END WHERE account=? AND folder=? AND uid=?",params![seen,a.id,folder,uid])?==0{let fetched=session.uid_fetch(&uid,"(UID BODY.PEEK[])")?;if let Some(raw)=fetched.iter().find(|v|v.uid.map(|v|v.to_string())==Some(uid.clone())).and_then(|v|v.body()){let t=c.transaction()?;let outgoing=mailparse::parse_mail(raw).ok().and_then(|m|mailparse::MailHeaderMap::get_first_value(&m.headers[..],"From")).is_some_and(|s|crate::delivery::addresses(&s).iter().any(|v|v.eq_ignore_ascii_case(&a.address)));mime::save(&t,&a.id,folder,&uid,raw,outgoing,seen)?;t.commit()?;}}
+            let updated=c.execute("UPDATE messages SET seen=CASE WHEN pending_seen=1 THEN 1 ELSE ? END WHERE account=? AND folder=? AND uid=?",params![seen,a.id,folder,uid])?;
+            if updated > 0 {
+                continue;
+            }
+            let hidden: bool = c.query_row(
+                "SELECT EXISTS(SELECT 1 FROM hidden WHERE account=? AND folder=? AND uid=?)",
+                params![a.id, folder, uid],
+                |r| r.get(0),
+            )?;
+            if hidden {
+                continue;
+            }
+            let fetched = session.uid_fetch(&uid, "(UID BODY.PEEK[])")?;
+            if let Some(raw) = fetched
+                .iter()
+                .find(|v| v.uid == record.uid)
+                .and_then(|v| v.body())
+            {
+                use mailparse::MailHeaderMap;
+                let sender = mailparse::parse_mail(raw)?
+                    .headers
+                    .get_first_value("From")
+                    .unwrap_or_default();
+                let outgoing = crate::delivery::addresses(&sender)
+                    .iter()
+                    .any(|v| v.eq_ignore_ascii_case(&a.address));
+                let t = c.transaction()?;
+                mime::save(&t, &a.id, folder, &uid, raw, outgoing, seen)?;
+                t.commit()?;
+            }
         }
         let saved = c
             .prepare("SELECT uid FROM messages WHERE account=? AND folder=?")?

@@ -26,6 +26,3 @@ export function options(items, value) {
 export function basename(path) {
   return path.split(/[\\/]/).pop();
 }
-export function draftBody(draft) {
-  return draft.body + (draft.signature ? "\n\n-- \n" + draft.signature : "");
-}

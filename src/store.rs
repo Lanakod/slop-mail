@@ -26,13 +26,22 @@ pub struct Profile {
     pub path: PathBuf,
 }
 pub fn app_dir() -> Result<PathBuf> {
-    let p = directories::ProjectDirs::from("org", "SlopMail", "Slop Mail")
-        .context("Нет системного каталога")?
-        .data_dir()
-        .to_owned();
-    fs::create_dir_all(&p)?;
-    Ok(p)
+    #[cfg(test)]
+    {
+        TEST_DIR.with(|d| Ok(d.path().to_path_buf()))
+    }
+    #[cfg(not(test))]
+    {
+        let p = directories::ProjectDirs::from("org", "SlopMail", "Slop Mail")
+            .context("Нет системного каталога")?
+            .data_dir()
+            .to_owned();
+        fs::create_dir_all(&p)?;
+        Ok(p)
+    }
 }
+#[cfg(test)]
+thread_local! { static TEST_DIR: tempfile::TempDir = tempfile::tempdir().expect("test registry"); }
 fn registry() -> Result<Connection> {
     let c = Connection::open(app_dir()?.join("profiles.sqlite"))?;
     c.execute_batch("CREATE TABLE IF NOT EXISTS profiles(id TEXT PRIMARY KEY,name TEXT NOT NULL,path TEXT UNIQUE NOT NULL)")?;
@@ -108,7 +117,8 @@ CREATE TRIGGER index_message AFTER INSERT ON messages BEGIN INSERT INTO search(r
 CREATE TRIGGER unindex_message AFTER DELETE ON messages BEGIN DELETE FROM search WHERE rowid=old.id; END;
 CREATE TABLE contacts(id TEXT PRIMARY KEY,name TEXT,emails TEXT);
 CREATE TABLE drafts(slot TEXT PRIMARY KEY,data TEXT);
-CREATE TABLE queue(id TEXT PRIMARY KEY,account TEXT,recipients TEXT,raw BLOB,state TEXT,error TEXT,created INTEGER);
+CREATE TABLE queue(id TEXT PRIMARY KEY,account TEXT,recipients TEXT,raw BLOB,state TEXT,error TEXT,created INTEGER,batch TEXT);
+CREATE TABLE hidden(account TEXT,folder TEXT,uid TEXT,PRIMARY KEY(account,folder,uid));
 CREATE TABLE pop_history(account TEXT,uid TEXT,PRIMARY KEY(account,uid));
 "#;
 #[derive(Clone, Serialize, Deserialize)]
