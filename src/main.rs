@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod api;
+mod attachments;
 mod delivery;
 mod mime;
 mod network;

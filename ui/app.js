@@ -704,7 +704,7 @@ click("filter", () => {
 $("profile").onchange = action(switchProfile);
 let timer;
 $("search").oninput = () => {
-  if ($("search").value) {
+  if ($("search").value && (selection.account || selection.folder)) {
     selection = { account: "", folder: "" };
     $("fa").value = "";
     $("ff").value = "";
@@ -737,3 +737,12 @@ loadProfiles(localStorage.getItem("profile")).catch(err);
 setInterval(() => {
   if (pid && accounts.length) background(pid);
 }, 300000);
+
+const appWindow = window.__TAURI__.window.getCurrentWindow();
+appWindow
+  .onCloseRequested(async (event) => {
+    event.preventDefault();
+    await draftWrites;
+    await appWindow.destroy();
+  })
+  .catch(err);

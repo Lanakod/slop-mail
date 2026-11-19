@@ -1,0 +1,44 @@
+name: Desktop mail client
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            artifact: macOS-arm64
+            path: target/release/bundle/dmg/*.dmg
+          - os: windows-2022
+            artifact: Windows-x64
+            path: target/release/bundle/nsis/*.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.20.0'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.95.0
+          components: rustfmt, clippy
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build:ui
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+      - if: runner.os == 'macOS'
+        run: sh scripts/package-macos.sh
+      - if: runner.os == 'Windows'
+        run: npm run build -- --ci --bundles nsis
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Slop-Mail-${{ matrix.artifact }}
+          path: ${{ matrix.path }}
+          if-no-files-found: error

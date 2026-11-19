@@ -285,3 +285,104 @@ pub fn pop_sync<T: Read + Write>(
     }
     pop_cmd(p, "QUIT")
 }
+
+// Explicit, opt-in verification against an operator-specified mailbox. Ordinary CI
+// uses loopback fixtures and never reads credentials or sends an external message.
+#[cfg(test)]
+#[test]
+#[ignore = "requires explicit SMTP recipient, TLS servers and interactive credentials"]
+fn live_pop_smtp() -> Result<()> {
+    use crate::{delivery, store};
+    use lettre::Transport;
+    let setting = std::env::var;
+    let address = setting("SLOP_LIVE_ADDRESS")?;
+    let host = setting("SLOP_LIVE_HOST")?;
+    let recipient = setting("SLOP_LIVE_RECIPIENT")?;
+    let password = setting("SLOP_LIVE_PASSWORD")?;
+    let mut a = Account {
+        id: String::new(),
+        name: "Slop Mail".into(),
+        address: address.clone(),
+        login: address.clone(),
+        smtp_login: address,
+        signature: String::new(),
+        incoming: Server {
+            proto: "pop3".into(),
+            host: host.clone(),
+            port: 995,
+            tls: "tls".into(),
+        },
+        outgoing: Server {
+            proto: "smtp".into(),
+            host,
+            port: 465,
+            tls: "tls".into(),
+        },
+        keep: true,
+    };
+    let mut c = Connection::open_in_memory()?;
+    c.execute_batch(store::SCHEMA)?;
+    store::save_account(&mut c, &mut a)?;
+    let incoming = (|| -> Result<()> {
+        let mut p = pop_login(&a, &password)?;
+        pop_cmd(&mut p, "UIDL")?;
+        let list = String::from_utf8(multiline(&mut p)?)?;
+        if let Some(last) = list.lines().last() {
+            let mut fields = last.split_whitespace();
+            let number = fields.next().context("Нет номера")?.parse::<u32>()?;
+            let uid = fields.next().context("Нет UIDL")?;
+            pop_cmd(&mut p, &format!("RETR {number}"))?;
+            let raw = multiline(&mut p)?;
+            let t = c.transaction()?;
+            let local = mime::save(&t, &a.id, "INBOX", uid, &raw, false, false)?;
+            t.commit()?;
+            let opened:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM messages JOIN search ON search.rowid=messages.id WHERE messages.id=?)",[local],|r|r.get(0))?;
+            ensure!(opened, "Письмо отсутствует в индексе");
+            println!("POP3 TLS: UIDL, RETR, MIME and local search index verified");
+        } else {
+            println!("POP3 TLS: authenticated; mailbox is empty");
+        }
+        pop_cmd(&mut p, "QUIT")?;
+        Ok(())
+    })();
+    if let Err(e) = &incoming {
+        println!("POP3 check failed: {e:#}");
+    }
+    let transport = smtp(&a, &password)?;
+    ensure!(
+        transport
+            .test_connection()
+            .context("SMTP TLS connection test")?,
+        "SMTP NOOP"
+    );
+    println!("SMTP TLS: authenticated");
+    delivery::enqueue(
+        &mut c,
+        delivery::Compose {
+            account: a.id.clone(),
+            to: recipient,
+            personal: false,
+            parent: None,
+            signature: String::new(),
+            files: vec![],
+            slot: "live-test".into(),
+            subject: "Проверка Slop Mail".into(),
+            body: "Тестовое письмо для проверки отправки через настольный клиент Slop Mail.".into(),
+        },
+    )?;
+    let id: String = c.query_row("SELECT id FROM queue", [], |r| r.get(0))?;
+    delivery::send_one(&mut c, &id, |_, env, raw| {
+        transport
+            .send_raw(env, raw)
+            .map(|response| {
+                println!("SMTP accepted: {}", response.code());
+            })
+            .map_err(delivery::smtp_failure)
+    })?;
+    let (state, error): (String, String) =
+        c.query_row("SELECT state,error FROM queue WHERE id=?", [id], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })?;
+    ensure!(state == "sent", "SMTP state={state}: {error}");
+    incoming
+}

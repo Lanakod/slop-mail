@@ -1,11 +1,11 @@
 use crate::{
-    delivery, mime, network,
+    attachments, delivery, network,
     store::{self, Account},
 };
 use anyhow::{bail, ensure, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
-use std::{path::PathBuf, sync::Mutex};
+use std::sync::Mutex;
 static SYNC: Mutex<()> = Mutex::new(());
 static DELIVERY: Mutex<()> = Mutex::new(());
 #[tauri::command]
@@ -143,26 +143,7 @@ pub(crate) fn run(op: &str, pid: &str, a: Value) -> Result<Value> {
             ensure!(matches!(mime.as_str(), "image/png" | "image/jpeg" | "image/gif" | "image/webp"), "Формат изображения");
             Ok(json!(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(data))))
         }
-        "file" => {
-            let (name, data): (String, Vec<u8>) = c.query_row("SELECT name,data FROM attachments WHERE id=?", [n("id")], |r| Ok((r.get(0)?, r.get(1)?)))?;
-            let name = mime::safe_name(&name);
-            if s("action") == "save" {
-                if let Some(p) = rfd::FileDialog::new().set_file_name(name).save_file() {
-                    std::fs::write(p, data)?;
-                }
-            } else {
-                let dir = std::env::temp_dir().join(store::id());
-                std::fs::create_dir(&dir)?;
-                let path = dir.join(name);
-                std::fs::write(&path, data)?;
-                if s("action") == "open" {
-                    open::that_detached(path)?
-                } else {
-                    open_with(path)?
-                }
-            }
-            Ok(Value::Null)
-        }
+        "file" => { attachments::handle(&c,n("id"),s("action"))?;Ok(Value::Null) }
         "delete" => {
             let id = n("id");
             let t = c.transaction()?;
@@ -202,39 +183,14 @@ pub(crate) fn list(c: &Connection, a: &Value) -> Result<Value> {
     if a["files"] == true {
         sql += " AND EXISTS(SELECT 1 FROM attachments WHERE message=m.id)"
     }
-    sql += ") SELECT id,thread,account,folder,subject,sender,recipients,stamp,substr(body,1,150) AS preview,seen FROM hits WHERE rank=1 ORDER BY stamp DESC,id DESC";
+    sql += ") SELECT id,thread,account,folder,subject,sender,recipients,stamp,substr(body,1,150) AS preview,seen FROM hits";
+    if filter.is_empty() {
+        sql += " WHERE rank=1";
+    }
+    sql += " ORDER BY stamp DESC,id DESC";
     let refs = vals
         .iter()
         .map(|v| v as &dyn rusqlite::ToSql)
         .collect::<Vec<_>>();
     store::rows(c, &sql, &refs)
-}
-fn open_with(path: PathBuf) -> Result<()> {
-    #[cfg(target_os = "macos")]
-    {
-        if let Some(app) = rfd::FileDialog::new()
-            .set_directory("/Applications")
-            .set_can_create_directories(false)
-            .add_filter("Приложения", &["app"])
-            .pick_file()
-        {
-            ensure!(
-                std::process::Command::new("open")
-                    .arg("-a")
-                    .arg(app)
-                    .arg(path)
-                    .status()?
-                    .success(),
-                "Не удалось открыть файл"
-            );
-        }
-    }
-    #[cfg(target_os = "windows")]
-    {
-        std::process::Command::new("rundll32.exe")
-            .arg("shell32.dll,OpenAs_RunDLL")
-            .arg(path)
-            .spawn()?;
-    }
-    Ok(())
 }

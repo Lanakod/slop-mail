@@ -15,8 +15,9 @@
     "@tauri-apps/cli": "2.10.1",
     "eslint": "9.39.1",
     "globals": "16.5.0",
+    "jsdom": "26.1.0",
+    "prettier": "3.6.2",
     "typescript": "5.9.3",
-    "vite": "6.4.1",
-    "prettier": "3.6.2"
+    "vite": "6.4.1"
   }
 }
