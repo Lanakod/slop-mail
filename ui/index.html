@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Slop Mail</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header>
+      <div class="brand"><i>✉</i> Slop Mail</div>
+      <div class="tools">
+        <button id="compose" class="accent">✎ Написать</button
+        ><button id="sync">↻ Получить</button
+        ><button id="contacts">☷ Контакты</button
+        ><button id="queue">⇧ Очередь</button>
+      </div>
+      <button id="theme" title="Сменить тему" aria-label="Сменить тему">
+        ◐
+      </button>
+    </header>
+    <main>
+      <aside id="nav">
+        <div class="caption">
+          ПРОФИЛЬ
+          <button id="profiles" title="Добавить или открыть профиль">＋</button>
+        </div>
+        <select id="profile" aria-label="Активный профиль"></select>
+        <div class="caption">
+          ПОЧТОВЫЕ ЯЩИКИ <button id="add" title="Подключить ящик">＋</button>
+        </div>
+        <nav id="folders"></nav>
+      </aside>
+      <section id="middle">
+        <div class="search">
+          <input
+            id="search"
+            type="search"
+            placeholder="Поиск по всей почте…"
+            aria-label="Поиск"
+          /><button id="filter" title="Фильтры">☰</button>
+        </div>
+        <div id="filters" hidden></div>
+        <div class="listhead">
+          <button id="navtoggle" title="Профили и папки">☰</button>
+          <h1 id="foldertitle">Вся почта</h1>
+          <span id="count">0</span>
+        </div>
+        <div id="threads"></div>
+      </section>
+      <section id="reader">
+        <div class="empty">
+          <b>✉</b>
+          <h2>Выберите переписку</h2>
+        </div>
+      </section>
+    </main>
+    <footer>
+      <span id="light">●</span
+      ><span id="status" role="status">Открытие почты…</span
+      ><span class="footerbrand">SLOP MAIL</span>
+    </footer>
+    <dialog id="dialog">
+      <div class="dhead">
+        <h2 id="title"></h2>
+        <button id="close" aria-label="Закрыть">×</button>
+      </div>
+      <div id="content"></div>
+    </dialog>
+    <datalist id="addresses"></datalist>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
