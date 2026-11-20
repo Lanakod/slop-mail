@@ -254,7 +254,14 @@ async function list() {
       .querySelectorAll(".draftrow")
       .forEach((el, i) => {
         const d = drafts[i];
-        el.querySelector(".thread").onclick = action(() => compose("", d.slot));
+        el.querySelector(".thread").onclick = action(async () => {
+          if (
+            d.slot.startsWith("reply:") &&
+            (await openThread(d.slot.slice(6), d.parent))
+          )
+            return;
+          await compose("", d.slot);
+        });
         el.querySelector(".dropdraft").onclick = action(async () => {
           if (await ask("Удалить черновик?")) {
             await api("remove_draft", { slot: d.slot });
@@ -303,7 +310,7 @@ async function openThread(key, hit) {
   const data = await api("thread", { thread: key });
   if (token !== readerVersion) return;
   const last = data.at(-1);
-  if (!last) return;
+  if (!last) return false;
   document.body.classList.add("reading");
   $("reader").innerHTML =
     `<div class="readerhead"><button id="back">← Список</button><h1>${h(last.subject || "Без темы")}</h1></div><div id="timeline" class="timeline"></div><div id="quick"></div>`;
@@ -332,15 +339,11 @@ async function openThread(key, hit) {
       b.onclick = action(fn);
       parent.append(b);
     };
-    for (const [selector, raw] of [
-      ["strong", m.sender],
-      [".meta", m.recipients],
+    for (const [selector, participants] of [
+      ["strong", m.authors],
+      [".meta", m.addressees],
     ]) {
       const node = art.querySelector(selector);
-      const participants = await api("participants", { value: raw }).catch(
-        () => [],
-      );
-      if (token !== readerVersion) return;
       if (participants.length) {
         node.replaceChildren();
         if (selector === ".meta") node.append("Кому: ");
@@ -400,6 +403,7 @@ async function openThread(key, hit) {
   const target = $("msg" + (hit || last.id));
   target?.scrollIntoView({ block: "nearest" });
   await list();
+  return true;
 }
 async function htmlView(art, m, files, remote) {
   const template = document.createElement("template");
@@ -816,6 +820,9 @@ click("compose", () => compose());
 click("contacts", () => book.open());
 click("queue", queue);
 click("close", shut);
+$("dialog").addEventListener("close", () => {
+  if (quickView === "drafts") list().catch(err);
+});
 click("navtoggle", () => document.body.classList.toggle("navopen"));
 click("filter", () => {
   $("filters").hidden = !$("filters").hidden;

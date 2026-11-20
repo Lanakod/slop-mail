@@ -86,8 +86,9 @@ pub(crate) fn run(op: &str, pid: &str, a: Value) -> Result<Value> {
         "thread" => {
             let t = c.transaction()?;
             t.execute("UPDATE messages SET seen=1,pending_seen=1 WHERE thread=? AND seen=0", [s("thread")])?;
-            let data = store::rows(&t, "SELECT id,account,folder,thread,stamp,subject,sender,recipients,reply_to,body,html,outgoing,EXISTS(SELECT 1 FROM stars WHERE message=messages.id) AS starred FROM messages WHERE thread=? ORDER BY stamp,id", &[&s("thread")])?;
+            let mut data = store::rows(&t, "SELECT id,account,folder,thread,stamp,subject,sender,recipients,reply_to,body,html,outgoing,EXISTS(SELECT 1 FROM stars WHERE message=messages.id) AS starred FROM messages WHERE thread=? ORDER BY stamp,id", &[&s("thread")])?;
             t.commit()?;
+            for m in data.as_array_mut().unwrap(){m["authors"]=crate::book::participants(m["sender"].as_str().unwrap_or(""));m["addressees"]=crate::book::participants(m["recipients"].as_str().unwrap_or(""));}
             Ok(data)
         }
         "reply" => {
@@ -114,7 +115,6 @@ pub(crate) fn run(op: &str, pid: &str, a: Value) -> Result<Value> {
         }
         "preview" => Ok(json!(delivery::recipients(s("to"))?.iter().map(ToString::to_string).collect::<Vec<_>>())),
         "recipient_plan"=>Ok(json!(delivery::fields(s("to"),s("cc"),s("bcc"))?.into_iter().map(|(field,addr)|json!({"field":field,"email":addr.to_string()})).collect::<Vec<_>>())),
-        "participants"=>{let mut people=vec![];for entry in mailparse::addrparse(s("value"))?.iter(){let mut add=|v:&mailparse::SingleInfo|people.push(json!({"email":v.addr,"name":v.display_name}));match entry{mailparse::MailAddr::Single(v)=>add(v),mailparse::MailAddr::Group(g)=>g.addrs.iter().for_each(add)}}Ok(json!(people))},
         "enqueue" => Ok(json!(delivery::enqueue(&mut c, serde_json::from_value(a)?)?)),
         "deliver" => {
             let _guard = DELIVERY.lock().map_err(|_| anyhow::anyhow!("Ошибка очереди"))?;

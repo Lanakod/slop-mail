@@ -494,3 +494,34 @@ fn book_upgrade_preserves_legacy_rows_and_groups_on_edit() -> Result<()> {
     );
     Ok(())
 }
+#[test]
+fn saved_views_and_contact_history_match_exact_addresses_across_mailboxes() -> Result<()> {
+    let mut c = database()?;
+    let person = book::save(
+        &c,
+        &serde_json::json!({"name":"Alice","emails":"alice@example.org, personal@example.org"}),
+    )?;
+    let t = c.transaction()?;
+    let first = mime::save(&t, "work", "INBOX", "1", LETTER.as_bytes(), false, false)?;
+    let second = LETTER
+        .replace("alice@example.org", "personal@example.org")
+        .replace("<invoice@example.org>", "<other@example.org>");
+    mime::save(&t, "home", "INBOX", "1", second.as_bytes(), false, true)?;
+    let unrelated = LETTER
+        .replace("alice@example.org", "notalice@example.org")
+        .replace("<invoice@example.org>", "<third@example.org>");
+    mime::save(&t, "home", "INBOX", "3", unrelated.as_bytes(), false, true)?;
+    t.commit()?;
+    c.execute("INSERT INTO stars VALUES(?)", [first])?;
+    assert_eq!(book::history(&c, &person)?.as_array().unwrap().len(), 2);
+    for view in ["unread", "starred"] {
+        let rows = api::list(&c, &serde_json::json!({"view":view}))?;
+        assert_eq!(rows.as_array().unwrap().len(), 1);
+        assert_eq!(rows[0]["id"], first);
+    }
+    assert!(api::list(&c, &serde_json::json!({"view":"files"}))?
+        .as_array()
+        .unwrap()
+        .is_empty());
+    Ok(())
+}

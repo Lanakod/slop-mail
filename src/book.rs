@@ -87,7 +87,7 @@ pub fn history(c: &Connection, id: &str) -> Result<Value> {
         .into_iter()
         .map(|s| s.to_lowercase())
         .collect();
-    let mut statement=c.prepare("SELECT id,thread,stamp,subject,sender,recipients FROM messages ORDER BY stamp DESC,id DESC")?;
+    let mut statement=c.prepare("SELECT m.id,m.thread,m.stamp,m.subject,m.sender,COALESCE(q.recipients,m.recipients) FROM messages m LEFT JOIN queue q ON m.outgoing=1 AND m.folder='Отправленные (локально)' AND q.id=m.uid AND q.account=m.account ORDER BY m.stamp DESC,m.id DESC")?;
     let mut cursor = statement.query([])?;
     let mut threads = HashSet::new();
     let mut hits = vec![];
@@ -145,4 +145,20 @@ pub fn save_group(c: &mut Connection, a: &Value) -> Result<Value> {
     }
     t.commit()?;
     Ok(json!(id))
+}
+
+pub fn participants(value: &str) -> Value {
+    let mut people = vec![];
+    if let Ok(entries) = mailparse::addrparse(value) {
+        for entry in entries.iter() {
+            let mut add = |v: &mailparse::SingleInfo| {
+                people.push(json!({"email":v.addr,"name":v.display_name}))
+            };
+            match entry {
+                mailparse::MailAddr::Single(v) => add(v),
+                mailparse::MailAddr::Group(g) => g.addrs.iter().for_each(add),
+            }
+        }
+    }
+    json!(people)
 }

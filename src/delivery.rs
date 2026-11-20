@@ -78,11 +78,10 @@ pub fn enqueue(c: &mut Connection, d: Compose) -> Result<usize> {
         vec![to]
     };
     let parent = if let Some(parent) = d.parent {
-        Some(
-            c.query_row("SELECT mid,refs FROM messages WHERE id=?", [parent], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-            })?,
-        )
+        c.query_row("SELECT mid,refs FROM messages WHERE id=?", [parent], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })
+        .optional()?
     } else {
         None
     };
