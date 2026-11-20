@@ -84,19 +84,14 @@ header {
   border-bottom: 1px solid var(--line);
 }
 .brand {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   white-space: nowrap;
   font:
     italic bold 25px Georgia,
     serif;
   letter-spacing: -1.3px;
-}
-.brand i {
-  font: normal 23px monospace;
-  background: var(--active);
-  color: var(--high);
-  padding: 0 5px;
-  margin-right: 5px;
-  border-radius: 3px;
 }
 .tools,
 .actions {
@@ -481,8 +476,9 @@ legend {
   .brand {
     font-size: 19px;
   }
-  .brand i {
-    display: none;
+  .brand img {
+    width: 26px;
+    height: 26px;
   }
   aside {
     display: none;
