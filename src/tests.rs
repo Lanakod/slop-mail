@@ -21,6 +21,7 @@ fn account(c: &mut Connection) -> Result<store::Account> {
 fn database() -> Result<Connection> {
     let c = Connection::open_in_memory()?;
     c.execute_batch(store::SCHEMA)?;
+    book::migrate(&c)?;
     Ok(c)
 }
 fn fixture<F, T>(f: F) -> Result<(u16, thread::JoinHandle<Result<T>>)>
@@ -133,6 +134,8 @@ fn smtp_server(
 }
 fn compose(a: &store::Account, to: &str, personal: bool, parent: Option<i64>) -> delivery::Compose {
     delivery::Compose {
+        cc: String::new(),
+        bcc: String::new(),
         account: a.id.clone(),
         to: to.into(),
         subject: "Re: Invoice".into(),
@@ -430,5 +433,64 @@ fn unread_notifications_start_after_initial_inbox_and_skip_duplicates() -> Resul
     assert_eq!(imap_round(&mut c, &a, 1)?, 1);
     assert_eq!(imap_round(&mut c, &a, 1)?, 0);
     assert_eq!(imap_round(&mut c, &a, 2)?, 0);
+    Ok(())
+}
+#[test]
+fn copies_and_blind_copies_have_separate_headers_and_envelope() -> Result<()> {
+    let mut c = database()?;
+    let a = account(&mut c)?;
+    for personal in [false, true] {
+        let mut d = compose(&a, "one@example.org", personal, None);
+        d.cc = "two@example.org, ONE@example.org".into();
+        d.bcc = "three@example.org".into();
+        delivery::enqueue(&mut c, d)?;
+        for id in pending(&c)? {
+            let captured = smtp_round(&mut c, &id, false, false)?;
+            let m = mailparse::parse_mail(captured.raw.as_bytes())?;
+            assert!(m.headers.get_first_value("Bcc").is_none());
+            if personal {
+                assert_eq!(captured.to.len(), 1);
+                assert!(m.headers.get_first_value("Cc").is_none());
+                assert_eq!(
+                    captured.to[0],
+                    format!("RCPT TO:<{}>", m.headers.get_first_value("To").unwrap())
+                );
+            } else {
+                assert_eq!(captured.to.len(), 3);
+                assert_eq!(
+                    m.headers.get_first_value("Cc").as_deref(),
+                    Some("two@example.org")
+                );
+                assert!(!captured.raw.contains("three@example.org"));
+            }
+        }
+    }
+    Ok(())
+}
+#[test]
+fn book_upgrade_preserves_legacy_rows_and_groups_on_edit() -> Result<()> {
+    let mut c = Connection::open_in_memory()?;
+    c.execute_batch(store::SCHEMA)?;
+    c.execute_batch("PRAGMA foreign_keys=ON;INSERT INTO contacts VALUES('person','Имя','a@example.org, b@example.org');INSERT INTO drafts VALUES('new','{}');")?;
+    book::migrate(&c)?;
+    book::migrate(&c)?;
+    assert_eq!(book::list(&c)?[0]["emails"], "a@example.org, b@example.org");
+    book::save_group(
+        &mut c,
+        &serde_json::json!({"name":"Команда","members":["person"]}),
+    )?;
+    book::save(
+        &c,
+        &serde_json::json!({"id":"person","name":"Имя","emails":"b@example.org, a@example.org","labels":{"b@example.org":"Рабочий"},"favorite":true}),
+    )?;
+    assert_eq!(book::groups(&c)?[0]["members"][0], "person");
+    assert_eq!(book::list(&c)?[0]["favorite"], 1);
+    assert_eq!(
+        book::import(
+            &mut c,
+            &serde_json::json!([{"name":"Дубликат","emails":"A@example.org"},{"name":"Новый","emails":"other@example.org"}])
+        )?,
+        1
+    );
     Ok(())
 }

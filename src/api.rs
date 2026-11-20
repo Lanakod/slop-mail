@@ -86,7 +86,7 @@ pub(crate) fn run(op: &str, pid: &str, a: Value) -> Result<Value> {
         "thread" => {
             let t = c.transaction()?;
             t.execute("UPDATE messages SET seen=1,pending_seen=1 WHERE thread=? AND seen=0", [s("thread")])?;
-            let data = store::rows(&t, "SELECT id,account,folder,thread,stamp,subject,sender,recipients,reply_to,body,html,outgoing FROM messages WHERE thread=? ORDER BY stamp,id", &[&s("thread")])?;
+            let data = store::rows(&t, "SELECT id,account,folder,thread,stamp,subject,sender,recipients,reply_to,body,html,outgoing,EXISTS(SELECT 1 FROM stars WHERE message=messages.id) AS starred FROM messages WHERE thread=? ORDER BY stamp,id", &[&s("thread")])?;
             t.commit()?;
             Ok(data)
         }
@@ -109,10 +109,12 @@ pub(crate) fn run(op: &str, pid: &str, a: Value) -> Result<Value> {
         }
         "draft" => Ok(c.query_row("SELECT data FROM drafts WHERE slot=?", [s("slot")], |r| r.get::<_, String>(0)).optional()?.map(|x| serde_json::from_str(&x)).transpose()?.unwrap_or(Value::Null)),
         "save_draft" => {
-            c.execute("INSERT OR REPLACE INTO drafts VALUES(?,?)", params![s("slot"), a["data"].to_string()])?;
+            c.execute("INSERT OR REPLACE INTO drafts(slot,data,modified) VALUES(?,?,unixepoch())", params![s("slot"), a["data"].to_string()])?;
             Ok(Value::Null)
         }
         "preview" => Ok(json!(delivery::recipients(s("to"))?.iter().map(ToString::to_string).collect::<Vec<_>>())),
+        "recipient_plan"=>Ok(json!(delivery::fields(s("to"),s("cc"),s("bcc"))?.into_iter().map(|(field,addr)|json!({"field":field,"email":addr.to_string()})).collect::<Vec<_>>())),
+        "participants"=>{let mut people=vec![];for entry in mailparse::addrparse(s("value"))?.iter(){let mut add=|v:&mailparse::SingleInfo|people.push(json!({"email":v.addr,"name":v.display_name}));match entry{mailparse::MailAddr::Single(v)=>add(v),mailparse::MailAddr::Group(g)=>g.addrs.iter().for_each(add)}}Ok(json!(people))},
         "enqueue" => Ok(json!(delivery::enqueue(&mut c, serde_json::from_value(a)?)?)),
         "deliver" => {
             let _guard = DELIVERY.lock().map_err(|_| anyhow::anyhow!("Ошибка очереди"))?;
@@ -124,13 +126,20 @@ pub(crate) fn run(op: &str, pid: &str, a: Value) -> Result<Value> {
             c.execute("UPDATE queue SET state='pending',error='' WHERE id=? AND state IN ('failed','unknown')", [s("id")])?;
             Ok(Value::Null)
         }
-        "contacts" => store::rows(&c, "SELECT id,name,emails FROM contacts ORDER BY name", &[]),
-        "contact" => {
-            let emails = delivery::recipients(s("emails"))?.into_iter().map(|x| x.to_string()).collect::<Vec<_>>().join(", ");
-            let id = if s("id").is_empty() { store::id() } else { s("id").into() };
-            c.execute("INSERT OR REPLACE INTO contacts VALUES(?,?,?)", params![id, s("name"), emails])?;
-            Ok(Value::Null)
-        }
+        "contacts" => crate::book::list(&c),
+        "contact"=>Ok(json!(crate::book::save(&c,&a)?)),
+        "contact_history"=>crate::book::history(&c,s("id")),
+        "import_contacts"=>Ok(json!(crate::book::import(&mut c,&a["items"])?)),
+        "export_book"=>{let ext=if s("format")=="csv"{"csv"}else{"vcf"};if let Some(path)=rfd::FileDialog::new().set_file_name(format!("contacts.{ext}")).save_file(){std::fs::write(path,s("text"))?;}Ok(Value::Null)},
+        "groups"=>crate::book::groups(&c),
+        "save_group"=>crate::book::save_group(&mut c,&a),
+        "remove_group"=>{c.execute("DELETE FROM contact_groups WHERE id=?",[s("id")])?;Ok(Value::Null)},
+        "star"=>{if a["on"]==true{c.execute("INSERT OR IGNORE INTO stars VALUES(?)",[n("id")])?;}else{c.execute("DELETE FROM stars WHERE message=?",[n("id")])?;}Ok(Value::Null)},
+        "drafts"=>store::rows(&c,"SELECT slot,data,modified FROM drafts ORDER BY modified DESC,slot",&[]),
+        "remove_draft"=>{c.execute("DELETE FROM drafts WHERE slot=?",[s("slot")])?;Ok(Value::Null)},
+        "snippets"=>store::rows(&c,"SELECT id,name,body FROM snippets ORDER BY name",&[]),
+        "save_snippet"=>{ensure!(!s("name").trim().is_empty()&&!s("body").trim().is_empty(),"Введите название и текст");let id=if s("id").is_empty(){store::id()}else{s("id").into()};c.execute("INSERT OR REPLACE INTO snippets VALUES(?,?,?)",params![id,s("name"),s("body")])?;Ok(Value::Null)},
+        "remove_snippet"=>{c.execute("DELETE FROM snippets WHERE id=?",[s("id")])?;Ok(Value::Null)},
         "remove_contact" => {
             c.execute("DELETE FROM contacts WHERE id=?", [s("id")])?;
             Ok(Value::Null)
@@ -179,7 +188,13 @@ pub(crate) fn list(c: &Connection, a: &Value) -> Result<Value> {
             vals.push(val.into())
         }
     }
-    if a["files"] == true {
+    if a["view"] == "unread" {
+        sql += " AND seen=0";
+    }
+    if a["view"] == "starred" {
+        sql += " AND EXISTS(SELECT 1 FROM stars WHERE message=m.id)";
+    }
+    if a["files"] == true || a["view"] == "files" {
         sql += " AND EXISTS(SELECT 1 FROM attachments WHERE message=m.id)"
     }
     sql += ") SELECT id,thread,account,folder,subject,sender,recipients,stamp,substr(body,1,150) AS preview,seen FROM hits";

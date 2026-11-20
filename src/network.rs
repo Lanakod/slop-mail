@@ -415,6 +415,8 @@ fn live_pop_smtp() -> Result<()> {
     delivery::enqueue(
         &mut c,
         delivery::Compose {
+            cc: String::new(),
+            bcc: String::new(),
             account: a.id.clone(),
             to: recipient,
             personal: false,

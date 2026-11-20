@@ -99,6 +99,7 @@ pub fn db(pid: &str) -> Result<Connection> {
     )?;
     c.busy_timeout(Duration::from_secs(15))?;
     c.execute_batch("PRAGMA foreign_keys=ON")?;
+    crate::book::migrate(&c)?;
     Ok(c)
 }
 

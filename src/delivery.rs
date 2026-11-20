@@ -28,6 +28,10 @@ pub fn addresses(input: &str) -> Vec<String> {
 pub struct Compose {
     pub account: String,
     pub to: String,
+    #[serde(default)]
+    pub cc: String,
+    #[serde(default)]
+    pub bcc: String,
     pub subject: String,
     pub body: String,
     #[serde(default)]
@@ -50,11 +54,26 @@ pub fn recipients(s: &str) -> Result<Vec<lettre::Address>> {
     ensure!(!to.is_empty(), "Укажите получателей");
     Ok(to)
 }
+pub fn fields(to: &str, cc: &str, bcc: &str) -> Result<Vec<(&'static str, lettre::Address)>> {
+    let mut seen = HashSet::new();
+    let mut result = vec![];
+    for (field, text) in [("to", to), ("cc", cc), ("bcc", bcc)] {
+        if !text.trim().is_empty() {
+            for addr in recipients(text)? {
+                if seen.insert(addr.to_string().to_lowercase()) {
+                    result.push((field, addr))
+                }
+            }
+        }
+    }
+    ensure!(!result.is_empty(), "Укажите получателей");
+    Ok(result)
+}
 pub fn enqueue(c: &mut Connection, d: Compose) -> Result<usize> {
     let a = store::account(c, &d.account)?;
-    let to = recipients(&d.to)?;
+    let to = fields(&d.to, &d.cc, &d.bcc)?;
     let groups = if d.personal {
-        to.into_iter().map(|v| vec![v]).collect()
+        to.into_iter().map(|(_, addr)| vec![("to", addr)]).collect()
     } else {
         vec![to]
     };
@@ -94,8 +113,13 @@ pub fn enqueue(c: &mut Connection, d: Compose) -> Result<usize> {
             )))
             .from(Mailbox::new(Some(a.name.clone()), a.address.parse()?))
             .subject(&d.subject);
-        for addr in &group {
-            builder = builder.to(Mailbox::new(None, addr.clone()));
+        for (field, addr) in &group {
+            let m = Mailbox::new(None, addr.clone());
+            builder = match *field {
+                "cc" => builder.cc(m),
+                "bcc" => builder.bcc(m),
+                _ => builder.to(m),
+            };
         }
         if let Some((mid, refs)) = &parent {
             builder = builder.in_reply_to(mid.clone()).references(refs.clone())
@@ -119,7 +143,7 @@ pub fn enqueue(c: &mut Connection, d: Compose) -> Result<usize> {
         };
         let recipients = group
             .iter()
-            .map(ToString::to_string)
+            .map(|(_, addr)| addr.to_string())
             .collect::<Vec<_>>()
             .join(", ");
         t.execute(
