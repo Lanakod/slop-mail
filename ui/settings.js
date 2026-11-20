@@ -103,6 +103,7 @@ export function settingsMenu({ modal, click, api, schedule, flush }) {
     get("notify").onchange = () => {
       prefs.notify = get("notify").checked;
       persist();
+      schedule();
     };
     click("newpreset", () => edit(null));
     click("editpreset", () =>

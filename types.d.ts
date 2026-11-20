@@ -11,6 +11,12 @@ interface Window {
         destroy(): Promise<void>;
       };
     };
+    event: {
+      listen(
+        name: string,
+        handler: (event: { payload: any }) => void,
+      ): Promise<unknown>;
+    };
     core: {
       invoke(command: string, arguments: Record<string, unknown>): Promise<any>;
     };

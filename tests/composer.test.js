@@ -21,12 +21,9 @@ test("composer preserves typed text, recipient visibility and sender signature a
     document: w.document,
     localStorage: w.localStorage,
   });
-  const realInterval = globalThis.setInterval;
-  globalThis.setInterval = (...args) => realInterval(...args).unref();
-  t.after(() => {
-    globalThis.setInterval = realInterval;
-  });
-  let draft = null;
+  let draft = null,
+    closeWindow,
+    savedOnClose;
   const boxes = ["work", "home"].map((id) => ({
     id,
     name: id,
@@ -34,9 +31,20 @@ test("composer preserves typed text, recipient visibility and sender signature a
     signature: "signature-" + id,
   }));
   w.__TAURI__ = {
-    window: { getCurrentWindow: () => ({ onCloseRequested: async () => {} }) },
+    event: { listen: async () => {} },
+    window: {
+      getCurrentWindow: () => ({
+        onCloseRequested: async (handler) => {
+          closeWindow = handler;
+        },
+      }),
+    },
     core: {
-      invoke: async (_, { op, args }) => {
+      invoke: async (command, { op, args }) => {
+        if (command === "finish_close") {
+          savedOnClose = draft?.body;
+          return;
+        }
         switch (op) {
           case "profiles":
             return [{ id: "local", name: "Local" }];
@@ -98,4 +106,14 @@ test("composer preserves typed text, recipient visibility and sender signature a
   assert.equal(q("sender").value, "home");
   assert.equal(q("body").value, "Typed text");
   assert.equal(q("mode").value, "personal");
+  q("body").value = "Saved before hiding";
+  q("body").dispatchEvent(new w.Event("input", { bubbles: true }));
+  let prevented = false;
+  await closeWindow({
+    preventDefault() {
+      prevented = true;
+    },
+  });
+  assert.equal(prevented, true);
+  assert.equal(savedOnClose, "Saved before hiding");
 });

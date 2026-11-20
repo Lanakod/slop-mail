@@ -105,6 +105,7 @@ async function switchProfile() {
   await draftWrites;
   pid = $("profile").value;
   const active = pid;
+  schedule();
   localStorage.setItem("profile", pid);
   thread = "";
   quickView = "";
@@ -868,15 +869,27 @@ document.addEventListener("keydown", (e) => {
 });
 document.documentElement.className = localStorage.getItem("theme") || "";
 loadProfiles(localStorage.getItem("profile")).catch(err);
-let mailTimer;
 function schedule() {
-  clearInterval(mailTimer);
-  if (prefs.minutes > 0)
-    mailTimer = setInterval(() => {
-      if (pid && accounts.length) background(pid);
-    }, prefs.minutes * 60000);
+  return window.__TAURI__.core
+    .invoke("set_schedule", {
+      profile: pid,
+      minutes: prefs.minutes,
+      notify: prefs.notify,
+    })
+    .catch(err);
 }
-schedule();
+window.__TAURI__.event
+  .listen(
+    "scheduled-mail",
+    action(async ({ payload }) => {
+      if (pid !== payload.profile) return;
+      await refreshFolders();
+      await list();
+      if (pid === payload.profile)
+        status(payload.error || "Синхронизация завершена");
+    }),
+  )
+  .catch(err);
 $("sort").value = prefs.sort;
 $("sort").onchange = action(async () => {
   prefs.sort = $("sort").value;
@@ -903,6 +916,6 @@ appWindow
   .onCloseRequested(async (event) => {
     event.preventDefault();
     await draftWrites;
-    await appWindow.destroy();
+    await window.__TAURI__.core.invoke("finish_close", {});
   })
   .catch(err);

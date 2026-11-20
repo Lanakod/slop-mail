@@ -4286,7 +4286,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "slop-mail"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "ammonia",
  "anyhow",
@@ -4308,8 +4308,10 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-notification",
+ "tauri-plugin-single-instance",
  "tauri-plugin-updater",
  "tempfile",
+ "tokio",
  "uuid",
  "windows-sys 0.61.2",
 ]
@@ -4769,6 +4771,22 @@ dependencies = [
  "thiserror 2.0.21",
  "time",
  "url",
+ "zbus 5.19.0",
+]
+
+[[package]]
+name = "tauri-plugin-single-instance"
+version = "2.5.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "726b6da0dd5bd1344f84f4108a622c07d01923baacb5c803a605189672c5352f"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tauri",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "windows-sys 0.61.2",
  "zbus 5.19.0",
 ]
 
