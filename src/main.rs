@@ -7,6 +7,7 @@ mod desktop;
 mod discovery;
 mod mime;
 mod network;
+mod organize;
 mod scheduler;
 mod store;
 #[cfg(windows)]
@@ -34,6 +35,7 @@ fn main() {
             api::request,
             desktop::finish_close,
             desktop::update,
+            desktop::tray_counts,
             desktop::notify_mail
         ])
         .build(tauri::generate_context!())

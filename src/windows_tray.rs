@@ -19,7 +19,7 @@ pub fn setup(app: &App) -> anyhow::Result<()> {
     let open = MenuItem::with_id(app, "show_mail", "Открыть Slop Mail", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit_mail", "Выйти", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open, &quit])?;
-    TrayIconBuilder::new()
+    TrayIconBuilder::with_id("mail")
         .icon(app.default_window_icon().expect("bundled icon").clone())
         .tooltip("Slop Mail")
         .menu(&menu)

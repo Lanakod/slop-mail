@@ -9,7 +9,20 @@ use std::sync::Mutex;
 static SYNC: Mutex<()> = Mutex::new(());
 static DELIVERY: Mutex<()> = Mutex::new(());
 #[tauri::command]
-pub async fn request(op: String, profile: String, args: Value) -> Result<Value, String> {
+pub async fn request(
+    app: tauri::AppHandle,
+    op: String,
+    profile: String,
+    args: Value,
+) -> Result<Value, String> {
+    let arm = matches!(op.as_str(), "enqueue" | "bulk" | "sync" | "resume_work");
+    let result = execute(op, profile.clone(), args).await?;
+    if arm {
+        crate::scheduler::resume(app, profile).await?;
+    }
+    Ok(result)
+}
+pub async fn execute(op: String, profile: String, args: Value) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || run(&op, &profile, args))
         .await
         .map_err(|e| e.to_string())?
@@ -56,6 +69,9 @@ pub(crate) fn run(op: &str, pid: &str, a: Value) -> Result<Value> {
     }
     let mut c = store::db(pid)?;
     match op {
+        "resume_work"=>Ok(Value::Null),
+        "deadlines"=>store::rows(&c,"SELECT DISTINCT due,'deliver' AS op FROM send_holds UNION SELECT DISTINCT due,'apply_moves' FROM moves UNION SELECT DISTINCT until,'wake_due' FROM snoozes",&[]),
+        "wake_due"=>{c.execute("DELETE FROM snoozes WHERE until<=unixepoch()",[])?;Ok(Value::Null)}
         "accounts" => Ok(json!(store::accounts(&c)?)),
         "account" | "test" => {
             let mut acc: Account = serde_json::from_value(a["account"].clone())?;
@@ -81,7 +97,23 @@ pub(crate) fn run(op: &str, pid: &str, a: Value) -> Result<Value> {
             let pw = network::secret(pid, &acc, "in")?;
             Ok(json!(network::sync(&mut c, &acc, &pw)?))
         }
-        "folders" => store::rows(&c, "SELECT account,name FROM folders UNION SELECT DISTINCT account,folder FROM messages ORDER BY 1,2", &[]),
+        "folders" => store::rows(&c, "WITH names AS (SELECT account,name FROM folders UNION SELECT account,shown_folder FROM mail_items), counts AS (SELECT account,shown_folder,count(*) AS unread FROM mail_items WHERE seen=0 GROUP BY account,shown_folder) SELECT n.account,n.name,coalesce(c.unread,0) AS unread FROM names n LEFT JOIN counts c ON n.account=c.account AND n.name=c.shown_folder ORDER BY 1,2",&[]),
+        "bulk"=>crate::organize::bulk(&mut c,&a),
+        "apply_moves"=>{
+            let _guard=SYNC.lock().map_err(|_|anyhow::anyhow!("Ошибка синхронизации"))?;
+            crate::organize::apply_moves(&mut c,pid)
+        }
+        "undo_move"=>{ensure!(c.execute("DELETE FROM moves WHERE batch=? AND due>unixepoch()",[s("batch")])?>0,"Время отмены истекло");Ok(Value::Null)}
+        "saved_searches"=>store::rows(&c,"SELECT query FROM saved_searches ORDER BY query",&[]),
+        "save_search"=>{ensure!(!s("q").trim().is_empty(),"Введите запрос");c.execute("INSERT OR IGNORE INTO saved_searches VALUES(?)",[s("q").trim()])?;Ok(Value::Null)}
+        "drop_search"=>{c.execute("DELETE FROM saved_searches WHERE query=?",[s("q")])?;Ok(Value::Null)}
+        "rules"=>store::rows(&c,"SELECT * FROM rules ORDER BY id",&[]),
+        "save_rule"=>{let pattern=s("pattern").trim();ensure!(!pattern.is_empty() && (!s("label").trim().is_empty()||!s("folder").is_empty()||a["quiet"]==true),"Укажите отправителя и действие");if !s("folder").is_empty(){crate::organize::valid_folder(s("folder"))?;}
+            c.execute("INSERT INTO rules(pattern,label,destination,quiet) VALUES(?,?,?,?)",params![pattern,s("label").trim(),s("folder").trim(),a["quiet"]==true])?;Ok(Value::Null)}
+        "drop_rule"=>{c.execute("DELETE FROM rules WHERE id=?",[n("id")])?;Ok(Value::Null)}
+        "restore_links"=>{crate::network::restore_links(&c,pid,n("id"))?;Ok(Value::Null)}
+        "open_url"=>{let url=reqwest::Url::parse(s("url"))?;ensure!(matches!(url.scheme(),"http"|"https") && url.host().is_some(),"Разрешены только веб-ссылки");open::that(url.as_str())?;Ok(Value::Null)}
+
         "list" => list(&c, &a),
         "mark_seen" => {
             let seen=a["seen"].as_bool().ok_or_else(||anyhow::anyhow!("Не указано состояние прочтения"))?;
@@ -121,7 +153,8 @@ pub(crate) fn run(op: &str, pid: &str, a: Value) -> Result<Value> {
         }
         "preview" => Ok(json!(delivery::recipients(s("to"))?.iter().map(ToString::to_string).collect::<Vec<_>>())),
         "recipient_plan"=>Ok(json!(delivery::fields(s("to"),s("cc"),s("bcc"))?.into_iter().map(|(field,addr)|json!({"field":field,"email":addr.to_string()})).collect::<Vec<_>>())),
-        "enqueue" => Ok(json!(delivery::enqueue(&mut c, serde_json::from_value(a)?)?)),
+        "enqueue" => {let batch=store::id(); delivery::enqueue_batch(&mut c,serde_json::from_value(a.clone())?,&batch,Some(&a))?;Ok(json!(batch))}
+        "cancel_send"=>delivery::cancel(&mut c,s("batch")),
         "deliver" => {
             let _guard = DELIVERY.lock().map_err(|_| anyhow::anyhow!("Ошибка очереди"))?;
             delivery::dispatch(&mut c, pid)?;
@@ -172,13 +205,44 @@ pub(crate) fn run(op: &str, pid: &str, a: Value) -> Result<Value> {
 
 pub(crate) fn list(c: &Connection, a: &Value) -> Result<Value> {
     let s = |k: &str| a[k].as_str().unwrap_or("");
-    let filter = s("q")
-        .split_whitespace()
-        .map(|w| format!("\"{}\"*", w.replace('"', "\"\"")))
-        .collect::<Vec<_>>()
-        .join(" AND ");
-    let mut sql = String::from("WITH hits AS (SELECT id,thread,account,folder,subject,sender,recipients,stamp,substr(body,1,150) AS preview,seen,count(*) OVER(PARTITION BY thread) AS total,sum(1-seen) OVER(PARTITION BY thread) AS unread,first_value(subject) OVER(PARTITION BY thread ORDER BY stamp,id) AS topic,row_number() OVER(PARTITION BY thread ORDER BY stamp DESC,id DESC) AS rank FROM messages m WHERE 1");
+    let mut words = Vec::new();
+    let mut fields = Vec::new();
+    for word in s("q").split_whitespace() {
+        let (key, value) = word.split_once(':').unwrap_or(("", ""));
+        match key.to_lowercase().as_str() {
+            "от" | "from" if !value.is_empty() => fields.push(("sender", value)),
+            "файл" | "file" if !value.is_empty() => fields.push(("file", value)),
+            "метка" if !value.is_empty() => fields.push(("label", value)),
+            _ => words.push(format!("\"{}\"*", word.replace('"', "\"\""))),
+        }
+    }
+    let filter = words.join(" AND ");
+    let mut sql = String::from("WITH hits AS (SELECT id,thread,account,shown_folder AS folder,labels,subject,sender,recipients,stamp,substr(body,1,150) AS preview,seen,count(*) OVER(PARTITION BY thread) AS total,sum(1-seen) OVER(PARTITION BY thread) AS unread,first_value(subject) OVER(PARTITION BY thread ORDER BY stamp,id) AS topic,row_number() OVER(PARTITION BY thread ORDER BY stamp DESC,id DESC) AS rank FROM mail_items m WHERE 1");
     let mut vals = Vec::<String>::new();
+    for (field, value) in fields {
+        match field {
+            "sender" => {
+                sql += " AND id IN (SELECT rowid FROM search WHERE search MATCH ?)";
+                vals.push(format!("sender:\"{}\"*", value.replace('"', "\"\"")));
+            }
+            "file" => {
+                sql+=" AND EXISTS(SELECT 1 FROM attachments WHERE message=m.id AND instr(lower(name),lower(?))>0)";
+                vals.push(value.into());
+            }
+            _ => {
+                sql += " AND EXISTS(SELECT 1 FROM labels l WHERE l.message=m.id AND l.label=?)";
+                vals.push(value.into());
+            }
+        }
+    }
+    let snoozed = "EXISTS(SELECT 1 FROM snoozes z WHERE z.thread=m.thread AND z.until>unixepoch())";
+    if a["view"] == "snoozed" {
+        sql += " AND ";
+        sql += snoozed;
+    } else if s("q").is_empty() {
+        sql += " AND NOT ";
+        sql += snoozed;
+    }
     for (cond, val) in [
         (
             " AND m.id IN (SELECT rowid FROM search WHERE search MATCH ?)",
@@ -186,7 +250,7 @@ pub(crate) fn list(c: &Connection, a: &Value) -> Result<Value> {
         ),
         (" AND account=?", s("account")),
         (" AND thread=?", s("branch")),
-        (" AND folder=?", s("folder")),
+        (" AND shown_folder=?", s("folder")),
         (" AND stamp>=strftime('%s',?,'utc')+0", s("from")),
         (" AND stamp<strftime('%s',?,'+1 day','utc')+0", s("until")),
     ] {
@@ -204,7 +268,7 @@ pub(crate) fn list(c: &Connection, a: &Value) -> Result<Value> {
     if a["files"] == true || a["view"] == "files" {
         sql += " AND EXISTS(SELECT 1 FROM attachments WHERE message=m.id)"
     }
-    sql += ") SELECT id,thread,account,folder,subject,sender,recipients,stamp,preview,seen,total,unread,topic FROM hits";
+    sql += ") SELECT id,thread,account,folder,subject,sender,recipients,stamp,preview,labels,seen,total,unread,topic FROM hits";
     if s("branch").is_empty() && (filter.is_empty() || a["grouped"] == true) {
         sql += " WHERE rank=1";
     }

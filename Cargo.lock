@@ -4286,7 +4286,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "slop-mail"
-version = "0.3.3"
+version = "0.4.0"
 dependencies = [
  "ammonia",
  "anyhow",
@@ -4296,6 +4296,7 @@ dependencies = [
  "imap",
  "keyring",
  "lettre",
+ "mac-notification-sys",
  "mailparse",
  "native-tls",
  "open",
@@ -4310,6 +4311,7 @@ dependencies = [
  "tauri-plugin-notification",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
+ "tauri-winrt-notification",
  "tempfile",
  "tokio",
  "uuid",

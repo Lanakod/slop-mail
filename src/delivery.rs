@@ -69,7 +69,16 @@ pub fn fields(to: &str, cc: &str, bcc: &str) -> Result<Vec<(&'static str, lettre
     ensure!(!result.is_empty(), "Укажите получателей");
     Ok(result)
 }
+#[cfg(test)]
 pub fn enqueue(c: &mut Connection, d: Compose) -> Result<usize> {
+    enqueue_batch(c, d, &store::id(), None)
+}
+pub fn enqueue_batch(
+    c: &mut Connection,
+    d: Compose,
+    batch: &str,
+    draft: Option<&serde_json::Value>,
+) -> Result<usize> {
     let a = store::account(c, &d.account)?;
     let to = fields(&d.to, &d.cc, &d.bcc)?;
     let groups = if d.personal {
@@ -99,7 +108,12 @@ pub fn enqueue(c: &mut Connection, d: Compose) -> Result<usize> {
     }
     let t = c.transaction()?;
     let count = groups.len();
-    let batch = store::id();
+    if let Some(data) = draft {
+        t.execute(
+            "INSERT INTO send_holds VALUES(?,unixepoch()+10,?)",
+            params![batch, data.to_string()],
+        )?;
+    }
     for group in groups {
         let mut builder = Message::builder()
             .message_id(Some(format!(
@@ -146,12 +160,13 @@ pub fn enqueue(c: &mut Connection, d: Compose) -> Result<usize> {
             .collect::<Vec<_>>()
             .join(", ");
         t.execute(
-            "INSERT INTO queue VALUES(?,?,?,?,'pending','',?,?)",
+            "INSERT INTO queue VALUES(?,?,?,?,?,'',?,?)",
             params![
                 store::id(),
                 a.id,
                 recipients,
                 message.formatted(),
+                if draft.is_some() { "held" } else { "pending" },
                 store::now(),
                 batch
             ],
@@ -177,6 +192,10 @@ pub fn dispatch(c: &mut Connection, profile: &str) -> Result<()> {
         Err(std::fs::TryLockError::Error(e)) => return Err(e.into()),
     }
     c.execute("UPDATE queue SET state='unknown',error='Приложение закрылось до сохранения подтверждения' WHERE state='sending'",[])?;
+    let t = c.transaction()?;
+    t.execute("UPDATE queue SET state='pending' WHERE state='held' AND batch IN (SELECT batch FROM send_holds WHERE due<=unixepoch())",[])?;
+    t.execute("DELETE FROM send_holds WHERE due<=unixepoch()", [])?;
+    t.commit()?;
     let jobs = c
         .prepare("SELECT id FROM queue WHERE state='pending' ORDER BY rowid")?
         .query_map([], |r| r.get::<_, String>(0))?
@@ -246,4 +265,35 @@ where
     )?;
     t.commit()?;
     Ok(())
+}
+
+pub fn cancel(c: &mut Connection, batch: &str) -> Result<serde_json::Value> {
+    use serde_json::{json, Value};
+    let t = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let data: String = t
+        .query_row(
+            "SELECT draft FROM send_holds WHERE batch=? AND due>unixepoch()",
+            [batch],
+            |r| r.get(0),
+        )
+        .optional()?
+        .ok_or_else(|| anyhow::anyhow!("Время отмены истекло"))?;
+    let mut d: Value = serde_json::from_str(&data)?;
+    let slot = d["slot"].as_str().unwrap_or("");
+    let occupied: bool = t.query_row(
+        "SELECT EXISTS(SELECT 1 FROM drafts WHERE slot=?)",
+        [slot],
+        |r| r.get(0),
+    )?;
+    if occupied {
+        d["slot"] = json!(format!("new:{}", store::id()));
+    }
+    t.execute(
+        "INSERT INTO drafts(slot,data,modified) VALUES(?,?,unixepoch())",
+        params![d["slot"].as_str(), d.to_string()],
+    )?;
+    t.execute("DELETE FROM queue WHERE batch=? AND state='held'", [batch])?;
+    t.execute("DELETE FROM send_holds WHERE batch=?", [batch])?;
+    t.commit()?;
+    Ok(d)
 }

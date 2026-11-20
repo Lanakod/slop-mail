@@ -1,3 +1,5 @@
+import { chatBody } from "./mail-links.js";
+import { rulesPanel } from "./organize.js";
 import { threadList } from "./thread-list.js";
 import { addressBook } from "./book.js";
 import { recipientEditor, recipientFields } from "./recipients.js";
@@ -11,7 +13,7 @@ import {
   endpoint,
   applyConfig,
 } from "./settings.js";
-import { escapeHtml as h, options, splitQuote, basename } from "./helpers.js";
+import { escapeHtml as h, options, basename } from "./helpers.js";
 /** @returns {any} */
 const $ = (id) => document.getElementById(id);
 const api = (op, args = {}, profile = pid) =>
@@ -20,12 +22,12 @@ let pid = "",
   accounts = [],
   folders = [],
   people = [],
-  thread = "",
   listVersion = 0,
   readerVersion = 0;
 let selection = { account: "", folder: "" },
   syncProfile = "";
 let quickView = "";
+let savedSearches = [];
 let draftWrites = Promise.resolve();
 const ask = (text) => api("confirm", { text });
 const status = (t) => {
@@ -105,9 +107,9 @@ async function switchProfile() {
   await draftWrites;
   pid = $("profile").value;
   const active = pid;
+  $("undo-actions").replaceChildren();
   schedule();
   localStorage.setItem("profile", pid);
-  thread = "";
   quickView = "";
   mailList.reset();
   activeMessage = null;
@@ -133,11 +135,14 @@ async function switchProfile() {
     return;
   }
   status("Открытие профиля…");
+  await api("resume_work", {}, active);
   const data = await Promise.all(
-    ["accounts", "folders", "contacts"].map((op) => api(op, {}, active)),
+    ["accounts", "folders", "contacts", "saved_searches"].map((op) =>
+      api(op, {}, active),
+    ),
   );
   if (pid !== active) return;
-  [accounts, folders, people] = data;
+  [accounts, folders, people, savedSearches] = data;
   renderNav();
   renderFilters();
   await list();
@@ -149,6 +154,7 @@ async function switchProfile() {
   }
 }
 const views = {
+  snoozed: "◷ Отложенные",
   unread: "● Непрочитанные",
   starred: "★ Со звездой",
   files: "▧ С вложениями",
@@ -159,14 +165,40 @@ function renderNav() {
   for (const [id, label] of Object.entries(views)) {
     html += `<button data-view="${id}" class="${quickView === id ? "active" : ""}">${h(label)}</button>`;
   }
+  for (const [i, item] of savedSearches.entries())
+    html += '<button data-query="' + i + '">⌕ ' + h(item.query) + "</button>";
+  const totals = accounts.map((a) =>
+    folders
+      .filter((f) => f.account === a.id)
+      .reduce((n, f) => n + (f.unread || 0), 0),
+  );
+  const badge = (n) => (n ? '<span class="unread-count">' + n + "</span>" : "");
+  window.__TAURI__.core
+    .invoke("tray_counts", {
+      summary:
+        "Slop Mail · " +
+        (accounts
+          .map((a, i) => (a.name || a.address) + " — " + totals[i])
+          .join(", ") || "Нет ящиков"),
+    })
+    .catch(err);
   accounts.forEach((a, i) => {
-    html += `<div class="accountname"><button data-account="${i}" title="${h(a.address)}">▣　${h(a.name || a.address)}</button><button data-edit="${i}" title="Настройки ящика">⚙</button></div>`;
+    html += `<div class="accountname"><button data-account="${i}" title="${h(a.address)}">▣　${h(a.name || a.address)} ${badge(totals[i])}</button><button data-edit="${i}" title="Настройки ящика">⚙</button></div>`;
     folders.forEach((f, j) => {
       if (f.account === a.id)
-        html += `<button class="folder" data-index="${j}">▱　${h(f.name)}</button>`;
+        html += `<button class="folder" data-index="${j}">▱　${h(f.name)} ${badge(f.unread)}</button>`;
     });
   });
   $("folders").innerHTML = html;
+  for (const b of $("folders").querySelectorAll("[data-query]"))
+    b.onclick = action(async () => {
+      quickView = "";
+      selection = { account: "", folder: "" };
+      $("search").value = savedSearches[Number(b.dataset.query)].query;
+      renderFilters();
+      renderNav();
+      await list();
+    });
   for (const b of $("folders").querySelectorAll("[data-view]"))
     b.onclick = action(async () => {
       quickView = b.dataset.view;
@@ -220,7 +252,16 @@ function renderNav() {
 }
 function renderFilters() {
   const el = $("filters");
-  el.innerHTML = `<label>Ящик<select id="fa">${options([["", "Все ящики"], ...accounts.map((a) => [a.id, a.address])], selection.account)}</select></label><label>Папка<select id="ff">${options([["", "Все папки"], ...Array.from(new Set(folders.map((f) => f.name))).map((f) => [f, f])], selection.folder)}</select></label><label>С даты<input type="date" id="from"></label><label>По дату<input type="date" id="until"></label><label class="check"><input type="checkbox" id="hasfiles"> С вложениями</label>`;
+  el.innerHTML = `<label>Ящик<select id="fa">${options([["", "Все ящики"], ...accounts.map((a) => [a.id, a.address])], selection.account)}</select></label><label>Папка<select id="ff">${options([["", "Все папки"], ...Array.from(new Set(folders.map((f) => f.name))).map((f) => [f, f])], selection.folder)}</select></label><label>С даты<input type="date" id="from"></label><label>По дату<input type="date" id="until"></label><label class="check"><input type="checkbox" id="hasfiles"> С вложениями</label><button id="save-query">Сохранить запрос</button><button id="drop-query">Убрать сохранённый запрос</button>`;
+  for (const [id, op] of [
+    ["save-query", "save_search"],
+    ["drop-query", "drop_search"],
+  ])
+    click(id, async () => {
+      await api(op, { q: $("search").value });
+      savedSearches = await api("saved_searches");
+      renderNav();
+    });
   el.onchange = action(list);
 }
 let activeMessage = null;
@@ -229,7 +270,8 @@ const mailList = threadList({
   action,
   date,
   open: openThread,
-  refresh: list,
+  refresh: refreshMail,
+  bulk,
 });
 async function list() {
   if (!pid) return;
@@ -314,7 +356,6 @@ async function list() {
 async function openThread(key, hit) {
   await draftWrites;
   const token = ++readerVersion;
-  thread = key;
   activeMessage = hit;
   const data = await api("thread", { thread: key, hit });
   if (token !== readerVersion) return;
@@ -327,14 +368,7 @@ async function openThread(key, hit) {
   for (const m of data) {
     const files = await api("attachments", { id: m.id });
     if (token !== readerVersion) return;
-    const body = splitQuote(m.body)
-      .map(({ quoted, text }) => {
-        const block = "<pre>" + h(text) + "</pre>";
-        return quoted
-          ? "<details><summary>Цитата</summary>" + block + "</details>"
-          : block;
-      })
-      .join("");
+    const body = chatBody(m);
     let art = document.createElement("article");
     art.className =
       "bubble" +
@@ -342,6 +376,11 @@ async function openThread(key, hit) {
       (m.id === hit && $("search").value ? " hit" : "");
     art.id = "msg" + m.id;
     art.innerHTML = `<strong>${h(m.sender)}</strong><div class="meta">Кому: ${h(m.recipients)} · ${h(date(m.stamp))}</div><div class="plain-body">${body}</div><div class="parts"></div><div class="actions"></div>`;
+    for (const anchor of art.querySelectorAll("a"))
+      anchor.onclick = action(async (e) => {
+        e.preventDefault();
+        await api("open_url", { url: anchor.href });
+      });
     const btn = (parent, text, fn) => {
       let b = document.createElement("button");
       b.textContent = text;
@@ -376,6 +415,11 @@ async function openThread(key, hit) {
       },
     );
     if (m.html) {
+      if (!m.html.includes("href=") && !m.outgoing)
+        btn(actions, "Обновить ссылки с сервера", async () => {
+          await api("restore_links", { id: m.id });
+          await openThread(key, m.id);
+        });
       btn(actions, "HTML", () => htmlView(art, m, files, false));
       btn(actions, "Загрузить внешние изображения", () =>
         htmlView(art, m, files, true),
@@ -411,7 +455,7 @@ async function openThread(key, hit) {
   if (token !== readerVersion) return;
   const target = $("msg" + (hit || last.id));
   target?.scrollIntoView({ block: "nearest" });
-  await list();
+  await refreshMail();
   return true;
 }
 async function htmlView(art, m, files, remote) {
@@ -425,6 +469,23 @@ async function htmlView(art, m, files, remote) {
       if (f) img.src = await api("inline", { id: f.id });
     } else if (remote && /^https:\/\//i.test(src)) img.src = src;
   }
+  art.querySelector(".html-links")?.remove();
+  const links = document.createElement("div");
+  links.className = "html-links";
+  for (const a of template.content.querySelectorAll("a")) {
+    const url = a.getAttribute("href");
+    a.removeAttribute("href");
+    if (!/^https?:\/\//i.test(url || "")) continue;
+    const link = document.createElement("a");
+    link.href = url;
+    link.textContent = a.textContent || url;
+    link.title = url;
+    link.onclick = action(async (e) => {
+      e.preventDefault();
+      await api("open_url", { url });
+    });
+    links.append(link, " ");
+  }
   let frame = art.querySelector("iframe") || document.createElement("iframe");
   frame.setAttribute("sandbox", "");
   frame.title = "Содержимое письма";
@@ -433,7 +494,7 @@ async function htmlView(art, m, files, remote) {
     `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: ${remote ? "https:" : ""}; style-src 'unsafe-inline'"><meta name="referrer" content="no-referrer"><style>body{font:15px system-ui;overflow-wrap:anywhere}img{max-width:100%}</style>` +
     template.innerHTML;
   art.querySelector(".plain-body").hidden = true;
-  art.append(frame);
+  art.append(frame, links);
 }
 function accountDialog(edit) {
   const a = edit || {
@@ -647,6 +708,20 @@ async function composer(
     try {
       await draftWrites;
       const d = data();
+      if (
+        !d.files.length &&
+        /во вложении|прикладываю|прикрепляю|attached|see attachment/i.test(
+          d.body,
+        ) &&
+        (await ask(
+          "В тексте упоминается вложение. Добавить файл перед отправкой?",
+        ))
+      ) {
+        files.push(...(await api("pick")));
+        renderFiles();
+        save();
+        return;
+      }
       let targets = await api("recipient_plan", d, active);
       let to = targets.map((r) => r.email);
       const from = accounts.find((a) => a.id === d.account)?.address;
@@ -656,18 +731,15 @@ async function composer(
         ))
       )
         return;
-      await api("enqueue", d, active);
+      const batch = await api("enqueue", d, active);
+      undo("Отменить отправку", active, async () => {
+        await cancelSend(batch, active);
+      });
       host.oninput = null;
       if (parent) host.replaceChildren();
       else shut();
       status("Письмо в очереди");
-      await api("deliver", {}, active);
-      if (pid === active) {
-        await refreshQueueStatus();
-        await refreshFolders();
-        await list();
-        if (parent && thread === parent.thread) await openThread(thread, null);
-      }
+      await list();
     } finally {
       submitting = false;
     }
@@ -694,6 +766,76 @@ async function compose(to = "", slot = "") {
     slot || "new:" + crypto.randomUUID(),
   );
 }
+async function refreshMail() {
+  await refreshFolders();
+  await list();
+}
+async function cancelSend(batch, profile) {
+  const draft = await api("cancel_send", { batch }, profile);
+  if (draft.parent && draft.slot.startsWith("reply:"))
+    await openThread(draft.slot.slice(6), draft.parent);
+  else await compose("", draft.slot);
+}
+function undo(label, profile, fn) {
+  const b = document.createElement("button");
+  b.textContent = label;
+  b.onclick = action(async () => {
+    if (pid !== profile) return;
+    b.remove();
+    await fn();
+  });
+  $("undo-actions").append(b);
+  setTimeout(() => b.remove(), 10000);
+}
+async function bulk(key, ids, profile) {
+  const run = async (folder = "", until = 0) => {
+    if (pid !== profile) return;
+    const move = ["archive", "trash", "move"].includes(key);
+    const batch = await api(
+      "bulk",
+      { action: move ? "move" : key, ids, folder, until },
+      profile,
+    );
+    if (move) {
+      undo("Отменить перемещение", profile, async () => {
+        await api("undo_move", { batch }, profile);
+        await refreshMail();
+      });
+    }
+    await refreshMail();
+  };
+  if (key === "move" || key === "snooze") {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(9, 0, 0, 0);
+    const local = new Date(
+      tomorrow.getTime() - tomorrow.getTimezoneOffset() * 60000,
+    )
+      .toISOString()
+      .slice(0, 16);
+    modal(
+      key === "move" ? "Переместить письма" : "Отложить переписку",
+      key === "move"
+        ? '<label>Папка<input id="bulk-dest" list="mail-folders"></label><datalist id="mail-folders">' +
+            options(
+              [...new Set(folders.map((f) => f.name))].map((n) => [n, n]),
+              "",
+            ) +
+            '</datalist><button id="apply-bulk">Переместить</button>'
+        : '<label>Вернуть в список<input type="datetime-local" id="bulk-date" value="' +
+            local +
+            '"></label><button id="apply-bulk">Отложить</button>',
+    );
+    click("apply-bulk", async () => {
+      await run(
+        $("bulk-dest")?.value,
+        Math.floor(new Date($("bulk-date")?.value).getTime() / 1000),
+      );
+      shut();
+    });
+  } else
+    await run(key === "archive" ? "Archive" : key === "trash" ? "Trash" : "");
+}
 async function refreshFolders() {
   const active = pid;
   const data = await api("folders");
@@ -701,17 +843,6 @@ async function refreshFolders() {
     folders = data;
     renderNav();
   }
-}
-async function refreshQueueStatus() {
-  const jobs = await api("queue");
-  const failures = jobs.filter(
-    (j) => j.state === "failed" || j.state === "unknown",
-  );
-  status(
-    failures.length
-      ? "Требуют внимания в очереди: " + failures.length
-      : "Очередь обработана",
-  );
 }
 async function synchronize(active) {
   if (!active || syncProfile === active) return;
@@ -727,7 +858,8 @@ async function synchronize(active) {
       const count = await api("sync", { account: a.id }, active);
       if (count > 0 && prefs.notify && pid === active)
         await window.__TAURI__.core.invoke("notify_mail", {
-          account: a.address,
+          account: a.id,
+          profile: active,
           count,
         });
     } catch (e) {
@@ -764,6 +896,7 @@ const book = addressBook({
   profile: () => pid,
 });
 const states = {
+  held: "Можно отменить",
   pending: "В очереди",
   sending: "Отправляется",
   sent: "Принято сервером",
@@ -789,6 +922,15 @@ async function queue() {
         " / " +
         group.length;
       $("jobs").append(heading);
+      if (j.state === "held") {
+        const cancel = document.createElement("button");
+        cancel.textContent = "Отменить отправку";
+        cancel.onclick = action(async () => {
+          shut();
+          await cancelSend(j.batch, pid);
+        });
+        $("jobs").append(cancel);
+      }
     }
     let row = document.createElement("div");
     row.className = "entry";
@@ -811,7 +953,7 @@ async function queue() {
     $("jobs").append(row);
   }
   click("reload", queue);
-  if (jobs.some((j) => ["pending", "sending"].includes(j.state))) {
+  if (jobs.some((j) => ["held", "pending", "sending"].includes(j.state))) {
     const panel = $("jobs");
     setTimeout(() => {
       if (panel.isConnected && $("dialog").open) queue().catch(err);
@@ -880,6 +1022,18 @@ function schedule() {
 }
 window.__TAURI__.event
   .listen(
+    "open-mail",
+    action(async ({ payload }) => {
+      if (pid !== payload.profile) await loadProfiles(payload.profile);
+      if (pid === payload.profile) {
+        shut();
+        await openThread(payload.thread, payload.id);
+      }
+    }),
+  )
+  .catch(err);
+window.__TAURI__.event
+  .listen(
     "scheduled-mail",
     action(async ({ payload }) => {
       if (pid !== payload.profile) return;
@@ -898,7 +1052,14 @@ $("sort").onchange = action(async () => {
 });
 click(
   "settings",
-  settingsMenu({ modal, click, api, schedule, flush: () => draftWrites }),
+  settingsMenu({
+    modal,
+    click,
+    api,
+    schedule,
+    rules: rulesPanel({ api, modal, click, action }),
+    flush: () => draftWrites,
+  }),
 );
 const appWindow = window.__TAURI__.window.getCurrentWindow();
 api("about")

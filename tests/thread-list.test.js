@@ -48,3 +48,41 @@ test("expansion does not open or mark mail, context action targets the child", a
   ]);
   w.close();
 });
+
+test("Shift range and Ctrl selection star exactly the visible selected messages", async () => {
+  const w = new JSDOM('<div id="list"></div>').window;
+  globalThis.window = w;
+  globalThis.document = w.document;
+  const rows = [1, 2, 3, 4].map((id) => ({
+    id,
+    thread: String(id),
+    total: 1,
+    seen: 0,
+    subject: "Mail",
+  }));
+  const root = w.document.querySelector("#list");
+  let chosen;
+  const view = threadList({
+    api: async () => [],
+    action: (fn) => fn,
+    date: () => "",
+    open: () => {},
+    refresh: () => {},
+    bulk: async (...args) => {
+      chosen = args;
+    },
+  });
+  view.render(root, rows, {}, null, "work");
+  const buttons = root.querySelectorAll(".mail-row");
+  await buttons[0].onclick({ ctrlKey: true });
+  await buttons[2].onclick({ shiftKey: true });
+  await buttons[1].onclick({ metaKey: true });
+  buttons[2].dispatchEvent(
+    new w.MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+  );
+  await [...w.document.querySelectorAll('[role="menuitem"]')]
+    .find((b) => b.textContent === "Поставить звезду")
+    .onclick();
+  assert.deepEqual(chosen, ["star", [1, 3], "work"]);
+  w.close();
+});

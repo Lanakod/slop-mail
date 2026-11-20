@@ -46,7 +46,18 @@ fn line(s: &mut BufReader<TcpStream>) -> Result<String> {
     Ok(out.trim_end_matches(['\r', '\n']).into())
 }
 fn imap_round(c: &mut Connection, a: &store::Account, validity: u32) -> Result<usize> {
+    imap_round_with_archive(c, a, validity, false)
+}
+
+fn imap_round_with_archive(
+    c: &mut Connection,
+    a: &store::Account,
+    validity: u32,
+    archive: bool,
+) -> Result<usize> {
     let (port, server) = fixture(move |mut s| {
+        let mut moved = false;
+        let mut in_archive = false;
         let mut flags = "";
         write!(s.get_mut(), "* OK IMAP ready\r\n")?;
         loop {
@@ -55,12 +66,21 @@ fn imap_round(c: &mut Connection, a: &store::Account, validity: u32) -> Result<u
             let reply = if cmd.starts_with("LOGIN") {
                 "".into()
             } else if cmd.starts_with("LIST") {
-                "* LIST () \"/\" \"INBOX\"\r\n".into()
+                let mut names = String::from("* LIST () \"/\" \"INBOX\"\r\n");
+                if archive {
+                    names.push_str("* LIST (\\Archive) \"/\" \"Saved\"\r\n");
+                }
+                names
             } else if cmd.starts_with("SELECT") {
+                in_archive = cmd.contains("Saved");
                 format!("* 1 EXISTS\r\n* OK [UIDVALIDITY {validity}] ready\r\n")
+            } else if cmd == "UID MOVE 7 \"Saved\"" && archive && !in_archive {
+                moved = true;
+                String::new()
             } else if cmd.contains("BODY.PEEK") {
                 format!(
-                    "* 1 FETCH (UID 7 BODY[] {{{}}}\r\n{})\r\n",
+                    "* 1 FETCH (UID {} BODY[] {{{}}}\r\n{})\r\n",
+                    if in_archive { 19 } else { 7 },
                     LETTER.len(),
                     LETTER
                 )
@@ -71,7 +91,14 @@ fn imap_round(c: &mut Connection, a: &store::Account, validity: u32) -> Result<u
                 flags = "";
                 String::new()
             } else if cmd.starts_with("UID FETCH") {
-                format!("* 1 FETCH (UID 7 FLAGS ({flags}))\r\n")
+                if in_archive == moved {
+                    format!(
+                        "* 1 FETCH (UID {} FLAGS ({flags}))\r\n",
+                        if in_archive { 19 } else { 7 }
+                    )
+                } else {
+                    String::new()
+                }
             } else if cmd.starts_with("LOGOUT") {
                 write!(s.get_mut(), "* BYE closing\r\n{tag} OK done\r\n")?;
                 break;
@@ -577,5 +604,90 @@ fn expanding_thread_preserves_unread_and_only_opened_message_changes() -> Result
         json!({"thread":key,"ids":[second],"seen":false}),
     )?;
     assert_eq!(api::list(&c, &json!({}))?[0]["unread"], 2);
+    Ok(())
+}
+
+#[test]
+fn organize_messages_and_undo_before_delivery() -> Result<()> {
+    use serde_json::json;
+    let root = tempfile::tempdir()?;
+    let p = store::register(root.path(), Some("Mail"))?;
+    let mut c = store::db(&p.id)?;
+    let mut a = account(&mut c)?;
+    a.incoming.proto = "pop3".into();
+    c.execute("UPDATE servers SET proto='pop3' WHERE proto='imap'", [])?;
+    let run = |op, args| api::run(op, &p.id, args);
+    let t = c.transaction()?;
+    let id = mime::save(&t, &a.id, "INBOX", "uid1", LETTER.as_bytes(), false, false)?;
+    t.execute(
+        "INSERT INTO attachments(message,name,data) VALUES(?,'report.pdf',X'01')",
+        [id],
+    )?;
+    t.commit()?;
+    let found = run("list", json!({"q":"от:Alice файл:pdf"}))?;
+    assert_eq!(found[0]["id"], id);
+    run("save_search", json!({"q":"от:Alice файл:pdf"}))?;
+    assert_eq!(
+        run("saved_searches", json!({}))?[0]["query"],
+        "от:Alice файл:pdf"
+    );
+    run(
+        "bulk",
+        json!({"action":"snooze","until":store::now()+3600,"ids":[id]}),
+    )?;
+    assert_eq!(run("list", json!({}))?, json!([]));
+    assert_eq!(run("list", json!({"view":"snoozed"}))?[0]["id"], id);
+    run(
+        "save_rule",
+        json!({"pattern":"example.org","label":"Проект","folder":"Orders","quiet":true}),
+    )?;
+    assert!(!organize::arrived(&c, id, &a.id)?);
+    assert_eq!(
+        run("list", json!({"q":"метка:Проект"}))?[0]["folder"],
+        "Orders"
+    );
+    run("apply_moves", json!({}))?;
+    assert_eq!(run("folders", json!({}))?[0]["unread"], 1);
+    let batch = run("bulk", json!({"action":"move","folder":"Trash","ids":[id]}))?;
+    run("undo_move", json!({"batch":batch}))?;
+    assert_eq!(run("list", json!({}))?[0]["folder"], "Orders");
+    let file = root.path().join("report.txt");
+    std::fs::write(&file, "attachment")?;
+    let draft = json!({"slot":"new:test","to":"a@example.org,b@example.org","personal":true,"account":a.id,"subject":"Hello","body":"Text","files":[file]});
+    let batch = run("enqueue", draft.clone())?;
+    run("deliver", json!({}))?;
+    let jobs = run("queue", json!({}))?;
+    assert_eq!(jobs.as_array().unwrap().len(), 2);
+    assert!(jobs
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|j| j["state"] == "held"));
+    assert_eq!(run("cancel_send", json!({"batch":batch}))?, draft);
+    assert_eq!(run("queue", json!({}))?, json!([]));
+    assert_eq!(run("draft", json!({"slot":"new:test"}))?, draft);
+    Ok(())
+}
+
+#[test]
+fn named_html_links_keep_http_target_and_strip_script_attributes() -> Result<()> {
+    let raw=b"Message-ID: <x@y>\r\nContent-Type: text/html\r\n\r\n<a href=\"https://example.org/doc\" onclick=\"evil()\">Report</a>";
+    let html = mime::original_html(raw, "<x@y>")?;
+    assert!(html.contains("https://example.org/doc"));
+    assert!(!html.contains("onclick"));
+    Ok(())
+}
+
+#[test]
+fn imap_archive_tracks_new_uid_and_keeps_message_star() -> Result<()> {
+    let mut c = database()?;
+    let a = account(&mut c)?;
+    imap_round(&mut c, &a, 1)?;
+    let id: i64 = c.query_row("SELECT id FROM messages", [], |r| r.get(0))?;
+    c.execute("INSERT INTO stars VALUES(?)", [id])?;
+    c.execute("INSERT INTO moves VALUES(?,'Archive','batch',0)", [id])?;
+    imap_round_with_archive(&mut c, &a, 1, true)?;
+    let result:(String,String,bool)=c.query_row("SELECT folder,uid,EXISTS(SELECT 1 FROM stars WHERE message=messages.id) FROM messages WHERE id=?",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
+    assert_eq!(result, ("Saved".into(), "19".into(), true));
     Ok(())
 }

@@ -6,7 +6,7 @@ use std::collections::HashSet;
 
 pub fn migrate(c: &Connection) -> Result<()> {
     if c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))? >= 1 {
-        return Ok(());
+        return crate::organize::migrate(c);
     }
     let t = rusqlite::Transaction::new_unchecked(c, rusqlite::TransactionBehavior::Immediate)?;
     if t.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))? == 0 {
@@ -20,7 +20,7 @@ pub fn migrate(c: &Connection) -> Result<()> {
  PRAGMA user_version=1;")?;
     }
     t.commit()?;
-    Ok(())
+    crate::organize::migrate(c)
 }
 pub fn list(c: &Connection) -> Result<Value> {
     let mut data=store::rows(c,"SELECT id,name,emails,labels,favorite FROM contacts ORDER BY favorite DESC,name COLLATE NOCASE",&[])?;

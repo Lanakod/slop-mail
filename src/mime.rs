@@ -149,11 +149,7 @@ pub fn save(
     }
     let mut p = Parts::default();
     parts(&m, &mut p)?;
-    let html = ammonia::Builder::default()
-        .rm_tags(&["a"])
-        .add_url_schemes(&["cid"])
-        .clean(&p.html)
-        .to_string();
+    let html = clean_html(&p.html);
     if p.text.is_empty() {
         p.text = html2text::from_read(html.as_bytes(), 100).unwrap_or_default();
     }
@@ -171,4 +167,20 @@ pub fn save(
         )?;
     }
     Ok(row)
+}
+
+fn clean_html(html: &str) -> String {
+    ammonia::Builder::default()
+        .add_url_schemes(&["cid"])
+        .clean(html)
+        .to_string()
+}
+pub fn original_html(raw: &[u8], mid: &str) -> Result<String> {
+    let msg = mailparse::parse_mail(raw)?;
+    if let Some(original) = msg.headers.get_first_value("Message-ID") {
+        anyhow::ensure!(original.trim() == mid, "Идентификатор письма изменился");
+    }
+    let mut p = Parts::default();
+    parts(&msg, &mut p)?;
+    Ok(clean_html(&p.html))
 }

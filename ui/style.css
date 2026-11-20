@@ -715,3 +715,27 @@ dialog .composer {
   text-align: left;
   border: 0;
 }
+
+.mail-row.selected {
+  box-shadow: inset 4px 0 var(--active);
+  background: var(--high);
+  color: #19392e;
+}
+.plain-body a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+}
+.unread-count {
+  float: right;
+  padding: 0 5px;
+  font-weight: bold;
+}
+#undo-actions button {
+  padding: 1px 5px;
+}
+.mail-menu {
+  max-height: 90vh;
+  overflow: auto;
+}

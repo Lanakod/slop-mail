@@ -1,6 +1,6 @@
 use crate::{
     mime,
-    store::{Account, Server},
+    store::{self, Account, Server},
 };
 use anyhow::{bail, ensure, Context, Result};
 use lettre::{transport::smtp::authentication::Credentials, SmtpTransport};
@@ -108,6 +108,59 @@ fn imap_login(a: &Account, pw: &str) -> Result<Imap> {
     c.login(&a.login, pw)
         .map_err(|(e, _)| anyhow::anyhow!("Авторизация IMAP: {e}"))
 }
+pub fn restore_links(c: &Connection, pid: &str, id: i64) -> Result<()> {
+    let (account, folder, uid, mid): (String, String, String, String) = c.query_row(
+        "SELECT account,folder,uid,mid FROM messages WHERE id=?",
+        [id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+    )?;
+    let a = store::account(c, &account)?;
+    let pw = secret(pid, &a, "in")?;
+    let raw = if a.incoming.proto == "imap" {
+        let mut s = imap_login(&a, &pw)?;
+        let valid: u32 = c.query_row(
+            "SELECT validity FROM folders WHERE account=? AND name=?",
+            params![account, folder],
+            |r| r.get(0),
+        )?;
+        ensure!(
+            s.select(&folder)?.uid_validity == Some(valid),
+            "Папка изменилась. Сначала получите почту"
+        );
+        let uid = uid.parse::<u32>()?;
+        let data = s
+            .uid_fetch(uid.to_string(), "(UID BODY.PEEK[])")?
+            .iter()
+            .find(|m| m.uid == Some(uid))
+            .and_then(|m| m.body())
+            .context("Письмо отсутствует на сервере")?
+            .to_vec();
+        s.logout()?;
+        data
+    } else {
+        let mut p = pop_login(&a, &pw)?;
+        pop_cmd(&mut p, "UIDL")?;
+        let list = String::from_utf8(multiline(&mut p)?)?;
+        let n = list
+            .lines()
+            .find_map(|line| {
+                let mut s = line.split_whitespace();
+                let n = s.next()?.parse::<u32>().ok()?;
+                (s.next() == Some(uid.as_str())).then_some(n)
+            })
+            .context("Сервер больше не хранит эту копию")?;
+        pop_cmd(&mut p, &format!("RETR {n}"))?;
+        let data = multiline(&mut p)?;
+        pop_cmd(&mut p, "QUIT")?;
+        data
+    };
+    let html = mime::original_html(&raw, &mid)?;
+    c.execute(
+        "UPDATE messages SET html=? WHERE id=? AND mid=?",
+        params![html, id, mid],
+    )?;
+    Ok(())
+}
 pub fn smtp(a: &Account, pw: &str) -> Result<SmtpTransport> {
     let s = &a.outgoing;
     let b = if s.tls == "tls" {
@@ -142,6 +195,106 @@ pub fn sync(c: &mut Connection, a: &Account, pw: &str) -> Result<usize> {
     let count = imap_sync(c, a, &mut session)?;
     session.logout()?;
     Ok(count)
+}
+pub fn flush_moves(c: &mut Connection, a: &Account, pw: &str) -> Result<()> {
+    let pending=store::rows(c,"SELECT DISTINCT m.folder,f.validity FROM moves v JOIN messages m ON m.id=v.message JOIN folders f ON f.account=m.account AND f.name=m.folder WHERE m.account=? AND v.due<=unixepoch() AND m.uid NOT GLOB '*[^0-9]*'", &[&a.id])?;
+    if pending.as_array().unwrap().is_empty() {
+        return Ok(());
+    }
+    let mut session = imap_login(a, pw)?;
+    let folders = session.list(Some(""), Some("*"))?;
+    for row in pending.as_array().unwrap() {
+        let folder = row["folder"].as_str().unwrap();
+        ensure!(
+            session.select(folder)?.uid_validity.map(u64::from) == row["validity"].as_u64(),
+            "Папка изменилась. Сначала получите почту"
+        );
+        move_selected(c, a, &mut session, folder, &folders)?;
+    }
+    session.logout()?;
+    Ok(())
+}
+// IMAP4rev1 mailbox arguments use modified UTF-7 for non-ASCII folder names.
+fn mailbox_wire_name(name: &str) -> String {
+    use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
+    let mut result = String::new();
+    let mut bytes = Vec::new();
+    for ch in name.chars().chain(std::iter::once('\0')) {
+        if ch.is_ascii() {
+            if !bytes.is_empty() {
+                result.push('&');
+                result.push_str(&STANDARD_NO_PAD.encode(&bytes).replace('/', ","));
+                result.push('-');
+                bytes.clear();
+            }
+            if ch == '&' {
+                result.push_str("&-");
+            } else if ch != '\0' {
+                result.push(ch);
+            }
+        } else {
+            for unit in ch.encode_utf16(&mut [0; 2]) {
+                bytes.extend(unit.to_be_bytes());
+            }
+        }
+    }
+    result
+}
+fn move_selected<T: Read + Write>(
+    c: &mut Connection,
+    a: &Account,
+    session: &mut imap::Session<T>,
+    folder: &str,
+    folders: &[imap::types::Name],
+) -> Result<()> {
+    let pending = store::rows(c, "SELECT m.id,m.uid,v.destination FROM moves v JOIN messages m ON m.id=v.message WHERE m.account=? AND m.folder=? AND m.uid NOT GLOB '*[^0-9]*' AND v.due<=unixepoch()", &[&a.id,&folder])?;
+    for job in pending.as_array().unwrap() {
+        let id = job["id"].as_i64().unwrap();
+        let requested = job["destination"].as_str().unwrap();
+        let uid = job["uid"].as_str().unwrap().parse::<u32>()?;
+        let special = format!("\\{requested}");
+        let encoded = mailbox_wire_name(requested);
+        let special_folder=folders.iter().find(|f|matches!(requested,"Trash"|"Archive") &&
+            f.attributes().iter().any(|attr|matches!(attr, imap::types::NameAttribute::Custom(name) if name.eq_ignore_ascii_case(&special))));
+        let dest = special_folder
+            .or_else(|| folders.iter().find(|f| f.name() == requested))
+            .map(|f| f.name())
+            .unwrap_or(&encoded);
+        if dest != folder {
+            let moved = (|| -> imap::error::Result<()> {
+                if !folders.iter().any(|f| f.name() == dest)
+                    && session
+                        .list(Some(""), Some(dest))?
+                        .iter()
+                        .all(|f| f.name() != dest)
+                {
+                    session.create(dest)?;
+                }
+                session.uid_mv(uid.to_string(), dest)
+            })();
+            if let Err(error) = moved {
+                if matches!(
+                    error,
+                    imap::error::Error::No(_)
+                        | imap::error::Error::Bad(_)
+                        | imap::error::Error::Validate(_)
+                ) {
+                    c.execute("DELETE FROM moves WHERE message=?", [id])?;
+                }
+                return Err(error).context("Сервер не подтвердил перемещение IMAP");
+            }
+        }
+        let t = c.transaction()?;
+        if dest != folder {
+            t.execute(
+                "UPDATE messages SET folder=?,uid=? WHERE id=?",
+                params![dest, format!("moving:{id}"), id],
+            )?;
+        }
+        t.execute("DELETE FROM moves WHERE message=?", [id])?;
+        t.commit()?;
+    }
+    Ok(())
 }
 pub fn imap_sync<T: Read + Write>(
     c: &mut Connection,
@@ -184,7 +337,7 @@ pub fn imap_sync<T: Read + Write>(
         t.commit()?;
         let dirty = c
             .prepare(
-                "SELECT uid,seen FROM messages WHERE account=? AND folder=? AND pending_seen=1",
+                "SELECT uid,seen FROM messages WHERE account=? AND folder=? AND pending_seen=1 AND uid NOT GLOB '*[^0-9]*'",
             )?
             .query_map(params![a.id, folder], |r| {
                 Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?))
@@ -202,6 +355,7 @@ pub fn imap_sync<T: Read + Write>(
                 params![a.id, folder, uid,seen],
             )?;
         }
+        move_selected(c, a, session, folder, &folders)?;
         let flags = session.uid_fetch("1:*", "(UID FLAGS)")?;
         let mut remote = std::collections::HashSet::new();
         for record in flags.iter() {
@@ -236,16 +390,27 @@ pub fn imap_sync<T: Read + Write>(
                     .iter()
                     .any(|v| v.eq_ignore_ascii_case(&a.address));
                 let t = c.transaction()?;
-                mime::save(&t, &a.id, folder, &uid, raw, outgoing, seen)?;
+                let mid = mailparse::parse_mail(raw)?
+                    .headers
+                    .get_first_value("Message-ID")
+                    .unwrap_or_default();
+                let reused=t.execute("UPDATE messages SET uid=? WHERE id=(SELECT id FROM messages WHERE account=? AND folder=? AND uid LIKE 'moving:%' AND mid=? LIMIT 1)",params![uid,a.id,folder,mid])?;
+                let id = mime::save(&t, &a.id, folder, &uid, raw, outgoing, seen)?;
+                let arrival = old == Some(valid)
+                    && folder.eq_ignore_ascii_case("INBOX")
+                    && !outgoing
+                    && reused == 0;
+                let notify = arrival && crate::organize::arrived(&t, id, &a.id)?;
                 t.commit()?;
-                if old == Some(valid) && folder.eq_ignore_ascii_case("INBOX") && !outgoing && !seen
-                {
+                if notify && !seen {
                     count += 1;
                 }
             }
         }
         let saved = c
-            .prepare("SELECT uid FROM messages WHERE account=? AND folder=?")?
+            .prepare(
+                "SELECT uid FROM messages WHERE account=? AND folder=? AND uid NOT LIKE 'local:%'",
+            )?
             .query_map(params![a.id, folder], |r| r.get::<_, String>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         let t = c.transaction()?;
@@ -336,10 +501,11 @@ pub fn pop_sync<T: Read + Write>(
             pop_cmd(p, &format!("RETR {n}"))?;
             let raw = multiline(p)?;
             let t = c.transaction()?;
-            mime::save(&t, &a.id, "INBOX", uid, &raw, false, false)?;
+            let id = mime::save(&t, &a.id, "INBOX", uid, &raw, false, false)?;
+            let notify = initialized && crate::organize::arrived(&t, id, &a.id)?;
             t.execute("INSERT INTO pop_history VALUES(?,?)", params![a.id, uid])?;
             t.commit()?;
-            if initialized {
+            if notify {
                 count += 1;
             }
         }

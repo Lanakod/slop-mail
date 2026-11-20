@@ -1,6 +1,6 @@
 import { escapeHtml as h } from "./helpers.js";
 
-export function threadList({ api, action, date, open, refresh }) {
+export function threadList({ api, action, date, open, refresh, bulk }) {
   const expanded = new Set();
   let menu = null;
   function closeMenu() {
@@ -20,6 +20,10 @@ export function threadList({ api, action, date, open, refresh }) {
   function render(host, rows, filters, activeId, profile) {
     closeMenu();
     host.replaceChildren();
+    const selected = new Set();
+    let lastSelected = null;
+    const targets = new WeakMap();
+    const visible = () => Array.from(host.querySelectorAll(".mail-row"));
     function context(event, node, m, group) {
       event.preventDefault();
       closeMenu();
@@ -27,26 +31,50 @@ export function threadList({ api, action, date, open, refresh }) {
       menu.className = "mail-menu";
       menu.setAttribute("role", "menu");
       const title = document.createElement("small");
-      title.textContent = group ? "Письма ветки в этом списке" : "Письмо";
+      const chosen = selected.has(node)
+        ? visible().filter((b) => selected.has(b))
+        : [node];
+      title.textContent =
+        chosen.length > 1
+          ? "Выбрано строк: " + chosen.length
+          : group
+            ? "Письма ветки в этом списке"
+            : "Письмо";
       menu.append(title);
-      for (const seen of [true, false]) {
+      for (const [key, name] of [
+        ["read", "Отметить прочитанным"],
+        ["unread", "Отметить непрочитанным"],
+        ["star", "Поставить звезду"],
+        ["archive", "В архив"],
+        ["trash", "В корзину"],
+        ["move", "Переместить в папку…"],
+        ["snooze", "Отложить до…"],
+        ["wake", "Вернуть сейчас"],
+      ]) {
+        if (key === "wake" && filters.view !== "snoozed") continue;
         const b = document.createElement("button");
         b.type = "button";
         b.setAttribute("role", "menuitem");
-        b.textContent = seen
-          ? "Отметить прочитанным"
-          : "Отметить непрочитанным";
+        b.textContent = name;
         b.onclick = action(async () => {
           closeMenu();
-          const items = group
-            ? await api("list", { ...filters, branch: m.thread }, profile)
-            : [m];
-          await api(
-            "mark_seen",
-            { thread: m.thread, ids: items.map((v) => v.id), seen },
-            profile,
+          const batches = await Promise.all(
+            chosen.map((b) => {
+              const { m, group } = targets.get(b);
+              return group
+                ? api("list", { ...filters, branch: m.thread }, profile)
+                : [m];
+            }),
           );
-          await refresh();
+          const ids = [...new Set(batches.flat().map((row) => row.id))];
+          if (chosen.length === 1 && ["read", "unread"].includes(key)) {
+            await api(
+              "mark_seen",
+              { thread: m.thread, ids, seen: key === "read" },
+              profile,
+            );
+            await refresh();
+          } else await bulk(key, ids, profile);
         });
         menu.append(b);
       }
@@ -68,7 +96,29 @@ export function threadList({ api, action, date, open, refresh }) {
         ((group ? m.unread : !m.seen) ? " unread" : "") +
         (m.id === activeId ? " active" : "");
       b.innerHTML = `<time>${h(date(m.stamp))}</time><strong>${h((group ? m.topic : m.subject) || "Без темы")}</strong><span class="meta">${h(m.sender)} → ${h(m.recipients)}</span><small>${h(m.preview)}</small>`;
-      b.onclick = action(() => open(m.thread, m.id));
+      if (m.labels) {
+        const tag = document.createElement("small");
+        tag.textContent = m.labels;
+        b.append(tag);
+      }
+      targets.set(b, { m, group });
+      if (m.id === activeId) lastSelected = b;
+      b.onclick = action(async (e) => {
+        if (e?.ctrlKey || e?.metaKey || e?.shiftKey) {
+          const rows = visible();
+          if (e.shiftKey && rows.includes(lastSelected)) {
+            const range = [rows.indexOf(lastSelected), rows.indexOf(b)].sort(
+              (a, b) => a - b,
+            );
+            for (const row of rows.slice(range[0], range[1] + 1))
+              selected.add(row);
+          } else if (selected.has(b)) selected.delete(b);
+          else selected.add(b);
+          lastSelected = b;
+          for (const row of rows)
+            row.classList.toggle("selected", selected.has(row));
+        } else await open(m.thread, m.id);
+      });
       b.oncontextmenu = (e) => context(e, b, m, group);
       b.onkeydown = (e) => {
         if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10"))
