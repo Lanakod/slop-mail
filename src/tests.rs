@@ -691,3 +691,58 @@ fn imap_archive_tracks_new_uid_and_keeps_message_star() -> Result<()> {
     assert_eq!(result, ("Saved".into(), "19".into(), true));
     Ok(())
 }
+
+#[test]
+fn idle_receives_inbox_arrival_and_falls_back_without_capability() -> Result<()> {
+    for supported in [true, false] {
+        let (port, server) = fixture(move |mut stream| {
+            write!(stream.get_mut(), "* OK ready\r\n")?;
+            let mut messages = 0;
+            let mut idle_tag = String::new();
+            loop {
+                let command = line(&mut stream)?;
+                if command == "DONE" {
+                    write!(stream.get_mut(), "{idle_tag} OK idle complete\r\n")?;
+                    continue;
+                }
+                let (tag, cmd) = command.split_once(' ').context("IMAP tag")?;
+                if cmd.starts_with("LOGIN") {
+                    write!(stream.get_mut(), "{tag} OK logged in\r\n")?;
+                } else if cmd == "CAPABILITY" {
+                    let idle = if supported { " IDLE" } else { "" };
+                    write!(
+                        stream.get_mut(),
+                        "* CAPABILITY IMAP4rev1{idle}\r\n{tag} OK capabilities\r\n"
+                    )?;
+                } else if cmd.starts_with("EXAMINE") && supported {
+                    write!(
+                        stream.get_mut(),
+                        "* {messages} EXISTS\r\n{tag} OK selected\r\n"
+                    )?;
+                } else if cmd == "IDLE" && supported {
+                    if messages > 0 {
+                        break;
+                    }
+                    messages = 1;
+                    idle_tag = tag.to_string();
+                    write!(stream.get_mut(), "+ waiting\r\n* 1 EXISTS\r\n")?;
+                } else if cmd == "LOGOUT" {
+                    write!(stream.get_mut(), "* BYE logout\r\n{tag} OK done\r\n")?;
+                    break;
+                } else {
+                    anyhow::bail!("Unexpected command {cmd}");
+                }
+            }
+            Ok(())
+        })?;
+        let mut client = imap::Client::new(TcpStream::connect(("127.0.0.1", port))?);
+        client.read_greeting()?;
+        let mut session = client.login("test", "fixture").map_err(|e| e.0)?;
+        let mut arrivals = 0;
+        let result = network::watch_inbox(&mut session, false, || arrivals += 1);
+        assert_eq!(arrivals, usize::from(supported));
+        assert_eq!(result.is_err(), supported); // The IDLE fixture disconnects after the first arrival.
+        server.join().unwrap()?;
+    }
+    Ok(())
+}

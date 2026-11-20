@@ -81,7 +81,7 @@ pub(crate) fn run(op: &str, pid: &str, a: Value) -> Result<Value> {
                 if pw.is_empty() {
                     pw = network::secret(pid, &acc, side)?;
                 }
-                network::test(&acc, side, &pw)?;
+                return Ok(json!({"idle":network::test(&acc, side, &pw)?}));
             } else {
                 if acc.id.is_empty(){acc.id=store::id();}
                 for side in ["in", "out"] {

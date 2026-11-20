@@ -557,8 +557,13 @@ function accountDialog(edit) {
   for (const side of ["in", "out"])
     click("test" + side, async () => {
       $("error").textContent = "Подключение…";
-      await api("test", { ...data(), side });
-      $("error").textContent = "Соединение установлено";
+      const result = await api("test", { ...data(), side });
+      $("error").textContent =
+        result.idle === true
+          ? "Соединение установлено. Сервер поддерживает IMAP IDLE."
+          : result.idle === false
+            ? "Соединение установлено. Сервер предлагает проверку по расписанию."
+            : "Соединение установлено";
     });
   click("saveaccount", async () => {
     const args = data();
@@ -1016,6 +1021,7 @@ function schedule() {
     .invoke("set_schedule", {
       profile: pid,
       minutes: prefs.minutes,
+      instant: prefs.instant,
       notify: prefs.notify,
     })
     .catch(err);

@@ -3,6 +3,7 @@ import { escapeHtml as h, options } from "./helpers.js";
 export const prefs = {
   startup: true,
   minutes: 5,
+  instant: true,
   notify: true,
   sort: "newest",
   presets: [],
@@ -84,6 +85,7 @@ export function settingsMenu({ modal, click, api, schedule, flush, rules }) {
         ],
         prefs.minutes,
       )}</select></label>
+      <label class="check"><input id="instant" type="checkbox" ${prefs.instant ? "checked" : ""} ${prefs.minutes ? "" : "disabled"}> Получать сразу при поддержке IMAP IDLE</label>
       <label class="check"><input id="notify" type="checkbox" ${prefs.notify ? "checked" : ""}> Системные уведомления о новых письмах</label></fieldset>
       <fieldset><legend>Шаблоны подключения</legend><select id="presetlist" aria-label="Шаблон">${options(
         prefs.presets.map((x) => [x.id, x.name]),
@@ -97,6 +99,12 @@ export function settingsMenu({ modal, click, api, schedule, flush, rules }) {
     };
     get("minutes").onchange = () => {
       prefs.minutes = Number(get("minutes").value);
+      get("instant").disabled = !prefs.minutes;
+      persist();
+      schedule();
+    };
+    get("instant").onchange = () => {
+      prefs.instant = get("instant").checked;
       persist();
       schedule();
     };

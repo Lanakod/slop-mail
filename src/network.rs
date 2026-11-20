@@ -93,8 +93,10 @@ fn socket(s: &Server) -> Result<TcpStream> {
 }
 type Imap = imap::Session<TlsStream<TcpStream>>;
 fn imap_login(a: &Account, pw: &str) -> Result<Imap> {
+    imap_login_on(a, pw, socket(&a.incoming)?)
+}
+fn imap_login_on(a: &Account, pw: &str, t: TcpStream) -> Result<Imap> {
     let s = &a.incoming;
-    let t = socket(s)?;
     let tls = TlsConnector::new()?;
     let c = if s.tls == "tls" {
         let mut c = imap::Client::new(tls.connect(&s.host, t)?);
@@ -107,6 +109,64 @@ fn imap_login(a: &Account, pw: &str) -> Result<Imap> {
     };
     c.login(&a.login, pw)
         .map_err(|(e, _)| anyhow::anyhow!("Авторизация IMAP: {e}"))
+}
+// Shut down the blocking IDLE read when the active profile or schedule changes.
+#[derive(Default)]
+pub struct IdleSocket(Mutex<(bool, Option<TcpStream>)>);
+impl IdleSocket {
+    pub fn stop(&self) {
+        let mut state = self.0.lock().unwrap();
+        state.0 = true;
+        if let Some(stream) = state.1.take() {
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+        }
+    }
+    pub fn listen(
+        &self,
+        profile: &str,
+        account: &Account,
+        reconnect: bool,
+        changed: impl FnMut(),
+    ) -> Result<()> {
+        let pw = secret(profile, account, "in")?;
+        let stream = socket(&account.incoming)?;
+        {
+            let mut state = self.0.lock().unwrap();
+            ensure!(!state.0, "Ожидание остановлено");
+            state.1 = Some(stream.try_clone()?);
+        }
+        let result = imap_login_on(account, &pw, stream)
+            .and_then(|mut session| watch_inbox(&mut session, reconnect, changed));
+        self.0.lock().unwrap().1.take();
+        result
+    }
+}
+
+pub(crate) fn watch_inbox<T: Read + Write + imap::extensions::idle::SetReadTimeout>(
+    session: &mut imap::Session<T>,
+    reconnect: bool,
+    mut changed: impl FnMut(),
+) -> Result<()> {
+    if !session.capabilities()?.has_str("IDLE") {
+        session.logout()?;
+        return Ok(());
+    }
+    let snapshot = |m: imap::types::Mailbox| (m.uid_validity, m.uid_next, m.exists);
+    let mut previous = snapshot(session.examine("INBOX")?);
+    if reconnect {
+        changed();
+    }
+    loop {
+        session
+            .idle()?
+            .wait_with_timeout(Duration::from_secs(25 * 60))?;
+        let current = snapshot(session.examine("INBOX")?);
+        if current != previous {
+            changed();
+            previous = current;
+        }
+        while session.unsolicited_responses.try_recv().is_ok() {}
+    }
 }
 pub fn restore_links(c: &Connection, pid: &str, id: i64) -> Result<()> {
     let (account, folder, uid, mid): (String, String, String, String) = c.query_row(
@@ -173,18 +233,21 @@ pub fn smtp(a: &Account, pw: &str) -> Result<SmtpTransport> {
         .credentials(Credentials::new(a.smtp_login.clone(), pw.into()))
         .build())
 }
-pub fn test(a: &Account, side: &str, pw: &str) -> Result<()> {
+pub fn test(a: &Account, side: &str, pw: &str) -> Result<Option<bool>> {
     if side == "out" {
         ensure!(
             smtp(a, pw)?.test_connection()?,
             "SMTP не подтвердил соединение"
         );
     } else if a.incoming.proto == "imap" {
-        imap_login(a, pw)?.logout()?;
+        let mut session = imap_login(a, pw)?;
+        let idle = session.capabilities()?.has_str("IDLE");
+        session.logout()?;
+        return Ok(Some(idle));
     } else {
         pop_cmd(&mut pop_login(a, pw)?, "QUIT")?;
     }
-    Ok(())
+    Ok(None)
 }
 pub fn sync(c: &mut Connection, a: &Account, pw: &str) -> Result<usize> {
     if a.incoming.proto == "pop3" {
