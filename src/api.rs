@@ -83,9 +83,15 @@ pub(crate) fn run(op: &str, pid: &str, a: Value) -> Result<Value> {
         }
         "folders" => store::rows(&c, "SELECT account,name FROM folders UNION SELECT DISTINCT account,folder FROM messages ORDER BY 1,2", &[]),
         "list" => list(&c, &a),
+        "mark_seen" => {
+            let seen=a["seen"].as_bool().ok_or_else(||anyhow::anyhow!("Не указано состояние прочтения"))?;
+            let ids:Vec<i64>=serde_json::from_value(a["ids"].clone())?;
+            c.execute("UPDATE messages SET seen=?1,pending_seen=1 WHERE thread=?2 AND seen<>?1 AND id IN (SELECT value FROM json_each(?3))",params![seen,s("thread"),serde_json::to_string(&ids)?])?;
+            Ok(Value::Null)
+        }
         "thread" => {
             let t = c.transaction()?;
-            t.execute("UPDATE messages SET seen=1,pending_seen=1 WHERE thread=? AND seen=0", [s("thread")])?;
+            t.execute("UPDATE messages SET seen=1,pending_seen=1 WHERE thread=? AND id=? AND seen=0", params![s("thread"),a["hit"].as_i64()])?;
             let mut data = store::rows(&t, "SELECT id,account,folder,thread,stamp,subject,sender,recipients,reply_to,body,html,outgoing,EXISTS(SELECT 1 FROM stars WHERE message=messages.id) AS starred FROM messages WHERE thread=? ORDER BY stamp,id", &[&s("thread")])?;
             t.commit()?;
             for m in data.as_array_mut().unwrap(){m["authors"]=crate::book::participants(m["sender"].as_str().unwrap_or(""));m["addressees"]=crate::book::participants(m["recipients"].as_str().unwrap_or(""));}
@@ -171,7 +177,7 @@ pub(crate) fn list(c: &Connection, a: &Value) -> Result<Value> {
         .map(|w| format!("\"{}\"*", w.replace('"', "\"\"")))
         .collect::<Vec<_>>()
         .join(" AND ");
-    let mut sql = String::from("WITH hits AS (SELECT m.*,row_number() OVER(PARTITION BY thread ORDER BY stamp DESC,id DESC) AS rank FROM messages m WHERE 1");
+    let mut sql = String::from("WITH hits AS (SELECT id,thread,account,folder,subject,sender,recipients,stamp,substr(body,1,150) AS preview,seen,count(*) OVER(PARTITION BY thread) AS total,sum(1-seen) OVER(PARTITION BY thread) AS unread,first_value(subject) OVER(PARTITION BY thread ORDER BY stamp,id) AS topic,row_number() OVER(PARTITION BY thread ORDER BY stamp DESC,id DESC) AS rank FROM messages m WHERE 1");
     let mut vals = Vec::<String>::new();
     for (cond, val) in [
         (
@@ -179,6 +185,7 @@ pub(crate) fn list(c: &Connection, a: &Value) -> Result<Value> {
             filter.as_str(),
         ),
         (" AND account=?", s("account")),
+        (" AND thread=?", s("branch")),
         (" AND folder=?", s("folder")),
         (" AND stamp>=strftime('%s',?,'utc')+0", s("from")),
         (" AND stamp<strftime('%s',?,'+1 day','utc')+0", s("until")),
@@ -197,11 +204,11 @@ pub(crate) fn list(c: &Connection, a: &Value) -> Result<Value> {
     if a["files"] == true || a["view"] == "files" {
         sql += " AND EXISTS(SELECT 1 FROM attachments WHERE message=m.id)"
     }
-    sql += ") SELECT id,thread,account,folder,subject,sender,recipients,stamp,substr(body,1,150) AS preview,seen FROM hits";
-    if filter.is_empty() {
+    sql += ") SELECT id,thread,account,folder,subject,sender,recipients,stamp,preview,seen,total,unread,topic FROM hits";
+    if s("branch").is_empty() && (filter.is_empty() || a["grouped"] == true) {
         sql += " WHERE rank=1";
     }
-    sql += if a["sort"] == "oldest" {
+    sql += if !s("branch").is_empty() || a["sort"] == "oldest" {
         " ORDER BY stamp ASC,id ASC"
     } else {
         " ORDER BY stamp DESC,id DESC"

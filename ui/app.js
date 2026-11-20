@@ -1,3 +1,4 @@
+import { threadList } from "./thread-list.js";
 import { addressBook } from "./book.js";
 import { recipientEditor, recipientFields } from "./recipients.js";
 import { snippetMenu } from "./snippets.js";
@@ -107,6 +108,8 @@ async function switchProfile() {
   localStorage.setItem("profile", pid);
   thread = "";
   quickView = "";
+  mailList.reset();
+  activeMessage = null;
   readerVersion++;
   listVersion++;
   $("threads").innerHTML = empty("Загрузка почты…");
@@ -219,8 +222,17 @@ function renderFilters() {
   el.innerHTML = `<label>Ящик<select id="fa">${options([["", "Все ящики"], ...accounts.map((a) => [a.id, a.address])], selection.account)}</select></label><label>Папка<select id="ff">${options([["", "Все папки"], ...Array.from(new Set(folders.map((f) => f.name))).map((f) => [f, f])], selection.folder)}</select></label><label>С даты<input type="date" id="from"></label><label>По дату<input type="date" id="until"></label><label class="check"><input type="checkbox" id="hasfiles"> С вложениями</label>`;
   el.onchange = action(list);
 }
+let activeMessage = null;
+const mailList = threadList({
+  api,
+  action,
+  date,
+  open: openThread,
+  refresh: list,
+});
 async function list() {
   if (!pid) return;
+  mailList.closeMenu();
   const version = ++listVersion,
     q = $("search").value;
   let acc = $("fa")?.value || "",
@@ -271,7 +283,8 @@ async function list() {
       });
     return;
   }
-  let data = await api("list", {
+  const filters = {
+    grouped: true,
     view: quickView,
     q,
     sort: prefs.sort,
@@ -280,7 +293,8 @@ async function list() {
     from: $("from")?.value,
     until: $("until")?.value,
     files: $("hasfiles")?.checked,
-  });
+  };
+  const data = await api("list", filters);
   if (version !== listVersion) return;
   $("foldertitle").textContent = q
     ? "Результаты поиска"
@@ -289,25 +303,19 @@ async function list() {
       accounts.find((a) => a.id === acc)?.name ||
       "Вся почта";
   $("count").textContent = data.length;
-  $("threads").innerHTML =
-    data
-      .map(
-        (m, i) =>
-          `<button class="thread ${thread === m.thread ? "active" : ""}" data-i="${i}"><time>${h(date(m.stamp))}</time><strong>${m.seen ? "" : "• "}${h(m.subject || "Без темы")}</strong><span class="meta">${h(m.sender)} → ${h(m.recipients)}</span><small>${h(m.preview)}</small></button>`,
-      )
-      .join("") || empty(q ? "Ничего не найдено" : "В папке пока нет писем");
-  $("threads")
-    .querySelectorAll("button")
-    .forEach(
-      (b, i) =>
-        (b.onclick = action(() => openThread(data[i].thread, data[i].id))),
+  if (data.length)
+    mailList.render($("threads"), data, filters, activeMessage, pid);
+  else
+    $("threads").innerHTML = empty(
+      q ? "Ничего не найдено" : "В папке пока нет писем",
     );
 }
 async function openThread(key, hit) {
   await draftWrites;
   const token = ++readerVersion;
   thread = key;
-  const data = await api("thread", { thread: key });
+  activeMessage = hit;
+  const data = await api("thread", { thread: key, hit });
   if (token !== readerVersion) return;
   const last = data.at(-1);
   if (!last) return false;

@@ -183,14 +183,23 @@ pub fn imap_sync<T: Read + Write>(
         )?;
         t.commit()?;
         let dirty = c
-            .prepare("SELECT uid FROM messages WHERE account=? AND folder=? AND pending_seen=1")?
-            .query_map(params![a.id, folder], |r| r.get::<_, String>(0))?
+            .prepare(
+                "SELECT uid,seen FROM messages WHERE account=? AND folder=? AND pending_seen=1",
+            )?
+            .query_map(params![a.id, folder], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?))
+            })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        for uid in dirty {
-            session.uid_store(&uid, "+FLAGS.SILENT (\\Seen)")?;
+        for (uid, seen) in dirty {
+            let flags = if seen {
+                "+FLAGS.SILENT (\\Seen)"
+            } else {
+                "-FLAGS.SILENT (\\Seen)"
+            };
+            session.uid_store(&uid, flags)?;
             c.execute(
-                "UPDATE messages SET pending_seen=0 WHERE account=? AND folder=? AND uid=?",
-                params![a.id, folder, uid],
+                "UPDATE messages SET pending_seen=0 WHERE account=? AND folder=? AND uid=? AND seen=?",
+                params![a.id, folder, uid,seen],
             )?;
         }
         let flags = session.uid_fetch("1:*", "(UID FLAGS)")?;
@@ -200,7 +209,7 @@ pub fn imap_sync<T: Read + Write>(
             let uid = uid.to_string();
             remote.insert(uid.clone());
             let seen = record.flags().contains(&imap::types::Flag::Seen);
-            let updated=c.execute("UPDATE messages SET seen=CASE WHEN pending_seen=1 THEN 1 ELSE ? END WHERE account=? AND folder=? AND uid=?",params![seen,a.id,folder,uid])?;
+            let updated=c.execute("UPDATE messages SET seen=CASE WHEN pending_seen=1 THEN seen ELSE ? END WHERE account=? AND folder=? AND uid=?",params![seen,a.id,folder,uid])?;
             if updated > 0 {
                 continue;
             }

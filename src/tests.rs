@@ -47,6 +47,7 @@ fn line(s: &mut BufReader<TcpStream>) -> Result<String> {
 }
 fn imap_round(c: &mut Connection, a: &store::Account, validity: u32) -> Result<usize> {
     let (port, server) = fixture(move |mut s| {
+        let mut flags = "";
         write!(s.get_mut(), "* OK IMAP ready\r\n")?;
         loop {
             let command = line(&mut s)?;
@@ -63,8 +64,14 @@ fn imap_round(c: &mut Connection, a: &store::Account, validity: u32) -> Result<u
                     LETTER.len(),
                     LETTER
                 )
+            } else if cmd == "UID STORE 7 +FLAGS.SILENT (\\Seen)" {
+                flags = "\\Seen";
+                String::new()
+            } else if cmd == "UID STORE 7 -FLAGS.SILENT (\\Seen)" {
+                flags = "";
+                String::new()
             } else if cmd.starts_with("UID FETCH") {
-                "* 1 FETCH (UID 7 FLAGS ())\r\n".into()
+                format!("* 1 FETCH (UID 7 FLAGS ({flags}))\r\n")
             } else if cmd.starts_with("LOGOUT") {
                 write!(s.get_mut(), "* BYE closing\r\n{tag} OK done\r\n")?;
                 break;
@@ -82,6 +89,22 @@ fn imap_round(c: &mut Connection, a: &store::Account, validity: u32) -> Result<u
     session.logout()?;
     server.join().unwrap()?;
     Ok(count)
+}
+#[test]
+fn imap_sync_applies_both_local_read_states() -> Result<()> {
+    let mut c = database()?;
+    let a = account(&mut c)?;
+    imap_round(&mut c, &a, 1)?;
+    for seen in [true, false] {
+        c.execute("UPDATE messages SET seen=?,pending_seen=1", [seen])?;
+        imap_round(&mut c, &a, 1)?;
+        let state: (bool, bool) =
+            c.query_row("SELECT seen,pending_seen FROM messages", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?;
+        assert_eq!(state, (seen, false));
+    }
+    Ok(())
 }
 #[derive(Default)]
 struct Captured {
@@ -523,5 +546,36 @@ fn saved_views_and_contact_history_match_exact_addresses_across_mailboxes() -> R
         .as_array()
         .unwrap()
         .is_empty());
+    Ok(())
+}
+#[test]
+fn expanding_thread_preserves_unread_and_only_opened_message_changes() -> Result<()> {
+    use serde_json::json;
+    let root = tempfile::tempdir()?;
+    let p = store::register(root.path(), Some("Ветки"))?;
+    let mut c = store::db(&p.id)?;
+    let t = c.transaction()?;
+    let first = mime::save(&t, "box", "INBOX", "1", LETTER.as_bytes(), false, false)?;
+    let reply = LETTER.replace(
+        "Message-ID: <invoice@example.org>",
+        "Message-ID: <reply@example.org>\r\nIn-Reply-To: <invoice@example.org>",
+    );
+    let second = mime::save(&t, "box", "INBOX", "2", reply.as_bytes(), false, false)?;
+    t.commit()?;
+    let list = api::list(&c, &json!({"grouped":true}))?;
+    let key = &list[0]["thread"];
+    assert_eq!(list[0]["total"], 2);
+    assert_eq!(list[0]["unread"], 2);
+    let branch = api::list(&c, &json!({"branch":key}))?;
+    assert_eq!(branch[0]["id"], first);
+    assert_eq!(branch[1]["id"], second);
+    api::run("thread", &p.id, json!({"thread":key,"hit":second}))?;
+    assert_eq!(api::list(&c, &json!({}))?[0]["unread"], 1);
+    api::run(
+        "mark_seen",
+        &p.id,
+        json!({"thread":key,"ids":[second],"seen":false}),
+    )?;
+    assert_eq!(api::list(&c, &json!({}))?[0]["unread"], 2);
     Ok(())
 }
