@@ -29,6 +29,8 @@ pub(crate) fn run(op: &str, pid: &str, a: Value) -> Result<Value> {
                     == rfd::MessageDialogResult::Yes
             ))
         }
+        "about" => return Ok(json!({"version":env!("CARGO_PKG_VERSION"),"windows":cfg!(windows)})),
+        "discover" => return crate::discovery::discover(s("address")),
         "profiles" => return Ok(json!(store::profiles()?)),
         "profile" => {
             let new = a["new"] == true;
@@ -61,15 +63,13 @@ pub(crate) fn run(op: &str, pid: &str, a: Value) -> Result<Value> {
                 let side = s("side");
                 let mut pw = s(side).to_string();
                 if pw.is_empty() {
-                    pw = network::secret(pid, &acc, side, None)?;
+                    pw = network::secret(pid, &acc, side)?;
                 }
                 network::test(&acc, side, &pw)?;
             } else {
                 if acc.id.is_empty(){acc.id=store::id();}
                 for side in ["in", "out"] {
-                    if !s(side).is_empty() {
-                        network::secret(pid, &acc, side, Some(s(side)))?;
-                    }
+                    network::save_secret(pid,&acc,side,s(side),a["remember"]!=false)?;
                 }
                 store::save_account(&mut c,&mut acc)?;
             }
@@ -78,9 +78,8 @@ pub(crate) fn run(op: &str, pid: &str, a: Value) -> Result<Value> {
         "sync" => {
             let _guard = SYNC.lock().map_err(|_| anyhow::anyhow!("Ошибка синхронизации"))?;
             let acc = store::account(&c, s("account"))?;
-            let pw = network::secret(pid, &acc, "in", None)?;
-            network::sync(&mut c, &acc, &pw)?;
-            Ok(Value::Null)
+            let pw = network::secret(pid, &acc, "in")?;
+            Ok(json!(network::sync(&mut c, &acc, &pw)?))
         }
         "folders" => store::rows(&c, "SELECT account,name FROM folders UNION SELECT DISTINCT account,folder FROM messages ORDER BY 1,2", &[]),
         "list" => list(&c, &a),
@@ -187,7 +186,11 @@ pub(crate) fn list(c: &Connection, a: &Value) -> Result<Value> {
     if filter.is_empty() {
         sql += " WHERE rank=1";
     }
-    sql += " ORDER BY stamp DESC,id DESC";
+    sql += if a["sort"] == "oldest" {
+        " ORDER BY stamp ASC,id ASC"
+    } else {
+        " ORDER BY stamp DESC,id DESC"
+    };
     let refs = vals
         .iter()
         .map(|v| v as &dyn rusqlite::ToSql)

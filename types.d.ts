@@ -5,6 +5,9 @@ interface Window {
         onCloseRequested(
           handler: (event: { preventDefault(): void }) => Promise<void>,
         ): Promise<unknown>;
+        minimize(): Promise<void>;
+        toggleMaximize(): Promise<void>;
+        close(): Promise<void>;
         destroy(): Promise<void>;
       };
     };

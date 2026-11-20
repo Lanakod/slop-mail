@@ -160,8 +160,8 @@ pub fn dispatch(c: &mut Connection, profile: &str) -> Result<()> {
         .collect::<rusqlite::Result<Vec<_>>>()?;
     for id in jobs {
         send_one(c, &id, |a, env, raw| {
-            let pw = network::secret(profile, a, "out", None)
-                .map_err(|e| ("failed", format!("{e:#}")))?;
+            let pw =
+                network::secret(profile, a, "out").map_err(|e| ("failed", format!("{e:#}")))?;
             let transport = network::smtp(a, &pw).map_err(|e| ("failed", e.to_string()))?;
             transport
                 .send_raw(env, raw)

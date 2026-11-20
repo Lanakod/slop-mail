@@ -133,6 +133,9 @@ aside {
   padding: 15px 10px;
 }
 #middle {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   width: 340px;
   min-width: 215px;
   background: var(--panel);
@@ -510,5 +513,66 @@ legend {
   #back,
   #navtoggle {
     display: inline-block;
+  }
+}
+
+#threads {
+  overflow: auto;
+  min-height: 0;
+  flex: 1;
+}
+#middle > .search,
+#filters,
+.listhead {
+  flex-shrink: 0;
+}
+#sort {
+  font-size: 11px;
+  padding: 3px;
+  max-width: 110px;
+  margin-left: auto;
+}
+.listhead h1 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#settings {
+  margin-left: auto;
+}
+#theme {
+  margin-left: 0;
+}
+body.windows {
+  grid-template-rows: 32px 58px minmax(0, 1fr) 28px;
+}
+#titlebar {
+  display: flex;
+  background: var(--active);
+  color: white;
+  user-select: none;
+}
+#titlebar div {
+  flex: 1;
+  padding: 7px 12px;
+  font: 13px system-ui;
+}
+#titlebar button {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: white;
+  width: 46px;
+  padding: 0;
+}
+#titlebar button:hover {
+  background: #ffffff30;
+}
+#winclose:hover {
+  background: #a63333;
+}
+@media (max-width: 740px) {
+  body.windows aside {
+    top: 90px;
   }
 }

@@ -44,7 +44,7 @@ fn line(s: &mut BufReader<TcpStream>) -> Result<String> {
     anyhow::ensure!(s.read_line(&mut out)? > 0, "End of stream");
     Ok(out.trim_end_matches(['\r', '\n']).into())
 }
-fn imap_round(c: &mut Connection, a: &store::Account, validity: u32) -> Result<()> {
+fn imap_round(c: &mut Connection, a: &store::Account, validity: u32) -> Result<usize> {
     let (port, server) = fixture(move |mut s| {
         write!(s.get_mut(), "* OK IMAP ready\r\n")?;
         loop {
@@ -77,10 +77,10 @@ fn imap_round(c: &mut Connection, a: &store::Account, validity: u32) -> Result<(
     let mut client = imap::Client::new(TcpStream::connect(("127.0.0.1", port))?);
     client.read_greeting()?;
     let mut session = client.login("test", "fixture").map_err(|e| e.0)?;
-    network::imap_sync(c, a, &mut session)?;
+    let count = network::imap_sync(c, a, &mut session)?;
     session.logout()?;
     server.join().unwrap()?;
-    Ok(())
+    Ok(count)
 }
 #[derive(Default)]
 struct Captured {
@@ -417,5 +417,18 @@ fn html_attachment_and_filesystem_names() -> Result<()> {
     assert_eq!(name, "x.png");
     assert_eq!(mime::safe_name("..\\каталог/счёт"), "счёт");
     assert_eq!(mime::safe_name("CON.txt"), "attachment_CON.txt");
+    Ok(())
+}
+
+#[test]
+fn unread_notifications_start_after_initial_inbox_and_skip_duplicates() -> Result<()> {
+    let mut c = database()?;
+    let a = account(&mut c)?;
+    assert_eq!(imap_round(&mut c, &a, 1)?, 0);
+    // Reuse the fixture's single UID as an arrival in an initialized empty inbox.
+    c.execute("DELETE FROM messages", [])?;
+    assert_eq!(imap_round(&mut c, &a, 1)?, 1);
+    assert_eq!(imap_round(&mut c, &a, 1)?, 0);
+    assert_eq!(imap_round(&mut c, &a, 2)?, 0);
     Ok(())
 }

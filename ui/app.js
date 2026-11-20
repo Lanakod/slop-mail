@@ -1,3 +1,12 @@
+import {
+  prefs,
+  persist,
+  settingsMenu,
+  serverFields,
+  bindPorts,
+  endpoint,
+  applyConfig,
+} from "./settings.js";
 import { escapeHtml as h, options, splitQuote, basename } from "./helpers.js";
 /** @returns {any} */
 const $ = (id) => document.getElementById(id);
@@ -126,7 +135,7 @@ async function switchProfile() {
     accounts.length ? "Локальная почта открыта" : "Подключите первый ящик",
   );
   if (accounts.length) {
-    background(active);
+    background(active, prefs.startup);
   }
 }
 function renderNav() {
@@ -190,6 +199,7 @@ async function list() {
     folder = $("ff")?.value || "";
   let data = await api("list", {
     q,
+    sort: prefs.sort,
     account: acc,
     folder,
     from: $("from")?.value,
@@ -326,41 +336,32 @@ function accountDialog(edit) {
   const input = (id, label, v, type = "text") =>
     `<label>${label}<input id="${id}" type="${type}" value="${h(v)}"></label>`;
   const server = (k, title, s) =>
-    `<fieldset><legend>${title}</legend><div class="grid"><label>Протокол<select id="${k}proto">${options(
-      (k === "in" ? ["imap", "pop3"] : ["smtp"]).map((v) => [
-        v,
-        v.toUpperCase(),
-      ]),
-      s.proto,
-    )}</select></label><label>Шифрование<select id="${k}tls">${options(
-      [
-        ["tls", "TLS"],
-        ["starttls", "STARTTLS"],
-      ],
-      s.tls,
-    )}</select></label>${input(k + "host", "Сервер", s.host)}${input(k + "port", "Порт", s.port, "number")}${input(k + "login", "Логин", k === "in" ? a.login : a.smtp_login)}${input(k + "pass", "Пароль", "", "password")}</div><button id="test${k}">Проверить соединение</button></fieldset>`;
+    `<fieldset><legend>${title}</legend>${serverFields(k, s)}<div class="grid">${input(k + "login", "Логин", k === "in" ? a.login : a.smtp_login)}${input(k + "pass", "Пароль", "", "password")}</div><button id="test${k}">Проверить соединение</button></fieldset>`;
   modal(
     edit ? "Настройки ящика" : "Подключить ящик",
-    `<div class="grid">${input("aname", "Имя отправителя", a.name)}${input("address", "Email", a.address, "email")}</div>${server("in", "Входящая почта", a.incoming)}<label class="check"><input id="keep" type="checkbox" ${a.keep ? "checked" : ""}> POP3 · Оставлять письма на сервере</label>${server("out", "Исходящая почта", a.outgoing)}<label>Подпись<textarea id="signature">${h(a.signature)}</textarea></label><button id="saveaccount" class="accent">Сохранить ящик</button>`,
+    `<div class="grid">${input("aname", "Имя отправителя", a.name)}${input("address", "Email", a.address, "email")}</div><div class="actions"><button id="discover">Найти настройки по email</button><select id="applypreset" aria-label="Применить шаблон">${options([["", "Шаблон подключения…"], ...prefs.presets.map((p) => [p.id, p.name])], "")}</select></div>${server("in", "Входящая почта", a.incoming)}<label class="check"><input id="keep" type="checkbox" ${a.keep ? "checked" : ""}> POP3 · Оставлять письма на сервере</label>${server("out", "Исходящая почта", a.outgoing)}<label class="check"><input id="remember" type="checkbox" ${localStorage.getItem("remember:" + pid + ":" + a.id) !== "false" ? "checked" : ""}> Запомнить пароли на этом компьютере</label><label>Подпись<textarea id="signature">${h(a.signature)}</textarea></label><button id="saveaccount" class="accent">Сохранить ящик</button>`,
   );
-  for (const k of ["in", "out"]) {
-    const port = () => {
-      $(k + "port").value = {
-        imap: [993, 143],
-        pop3: [995, 110],
-        smtp: [465, 587],
-      }[$(k + "proto").value][$(k + "tls").value === "tls" ? 0 : 1];
-    };
-    $(k + "tls").onchange = port;
-    $(k + "proto").onchange = port;
-  }
+  bindPorts();
+  const dialogNode = $("discover");
+  click("discover", async () => {
+    const address = $("address").value.trim();
+    dialogNode.disabled = true;
+    $("error").textContent = "Поиск настроек…";
+    try {
+      const config = await api("discover", { address });
+      if (dialogNode.isConnected && $("address").value.trim() === address) {
+        applyConfig(config, address);
+        $("error").textContent = "Источник: " + config.source;
+      }
+    } finally {
+      dialogNode.disabled = false;
+    }
+  });
+  $("applypreset").onchange = () => {
+    const config = prefs.presets.find((p) => p.id === $("applypreset").value);
+    if (config) applyConfig(config, $("address").value.trim());
+  };
   const data = () => {
-    const endpoint = (k) => ({
-      proto: $(k + "proto").value,
-      host: $(k + "host").value.trim(),
-      port: Number($(k + "port").value),
-      tls: $(k + "tls").value,
-    });
     return {
       account: {
         id: a.id,
@@ -373,6 +374,7 @@ function accountDialog(edit) {
         incoming: endpoint("in"),
         outgoing: endpoint("out"),
       },
+      remember: $("remember").checked,
       in: $("inpass").value,
       out: $("outpass").value,
     };
@@ -384,7 +386,9 @@ function accountDialog(edit) {
       $("error").textContent = "Соединение установлено";
     });
   click("saveaccount", async () => {
-    await api("account", data());
+    const args = data();
+    const id = await api("account", args);
+    localStorage.setItem("remember:" + pid + ":" + id, String(args.remember));
     shut();
     await switchProfile();
   });
@@ -585,7 +589,12 @@ async function synchronize(active) {
     if (pid !== active) break;
     status("Получение почты · " + a.address);
     try {
-      await api("sync", { account: a.id }, active);
+      const count = await api("sync", { account: a.id }, active);
+      if (count > 0 && prefs.notify && pid === active)
+        await window.__TAURI__.core.invoke("notify_mail", {
+          account: a.address,
+          count,
+        });
     } catch (e) {
       errors.push(a.address + " · " + String(e));
     }
@@ -596,10 +605,10 @@ async function synchronize(active) {
   await list();
   status(errors.join(" / ") || "Синхронизация завершена");
 }
-async function background(active) {
+async function background(active, check = true) {
   try {
     await api("deliver", {}, active);
-    if (active === pid) await synchronize(active);
+    if (active === pid && check) await synchronize(active);
   } catch (e) {
     err(e);
   }
@@ -741,11 +750,37 @@ document.addEventListener("keydown", (e) => {
 });
 document.documentElement.className = localStorage.getItem("theme") || "";
 loadProfiles(localStorage.getItem("profile")).catch(err);
-setInterval(() => {
-  if (pid && accounts.length) background(pid);
-}, 300000);
-
+let mailTimer;
+function schedule() {
+  clearInterval(mailTimer);
+  if (prefs.minutes > 0)
+    mailTimer = setInterval(() => {
+      if (pid && accounts.length) background(pid);
+    }, prefs.minutes * 60000);
+}
+schedule();
+$("sort").value = prefs.sort;
+$("sort").onchange = action(async () => {
+  prefs.sort = $("sort").value;
+  persist();
+  await list();
+});
+click(
+  "settings",
+  settingsMenu({ modal, click, api, schedule, flush: () => draftWrites }),
+);
 const appWindow = window.__TAURI__.window.getCurrentWindow();
+api("about")
+  .then((info) => {
+    if (info.windows) {
+      $("titlebar").hidden = false;
+      document.body.classList.add("windows");
+      click("minimize", () => appWindow.minimize());
+      click("maximize", () => appWindow.toggleMaximize());
+      click("winclose", () => appWindow.close());
+    }
+  })
+  .catch(err);
 appWindow
   .onCloseRequested(async (event) => {
     event.preventDefault();

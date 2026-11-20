@@ -7,17 +7,23 @@ use lettre::{transport::smtp::authentication::Credentials, SmtpTransport};
 use native_tls::{TlsConnector, TlsStream};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::{
+    collections::HashMap,
+    sync::{LazyLock, Mutex},
+};
+use std::{
     io::{BufRead, BufReader, Read, Write},
     net::{TcpStream, ToSocketAddrs},
     time::Duration,
 };
-pub fn secret(profile: &str, a: &Account, side: &str, value: Option<&str>) -> Result<String> {
+static SESSION: LazyLock<Mutex<HashMap<String, String>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+fn credential_key(profile: &str, a: &Account, side: &str) -> Result<String> {
     let (server, login) = if side == "in" {
         (&a.incoming, &a.login)
     } else {
         (&a.outgoing, &a.smtp_login)
     };
-    let key = serde_json::to_string(&(
+    Ok(serde_json::to_string(&(
         profile,
         &a.id,
         side,
@@ -26,15 +32,50 @@ pub fn secret(profile: &str, a: &Account, side: &str, value: Option<&str>) -> Re
         server.port,
         &server.tls,
         login,
-    ))?;
-    let e = keyring::Entry::new("org.slopmail.desktop", &key)?;
-    if let Some(v) = value.filter(|v| !v.is_empty()) {
-        e.set_password(v)?;
-        Ok(v.into())
-    } else {
-        e.get_password()
-            .context("Нужен пароль. Откройте настройки ящика")
+    ))?)
+}
+pub fn secret(profile: &str, a: &Account, side: &str) -> Result<String> {
+    let key = credential_key(profile, a, side)?;
+    if let Some(value) = SESSION.lock().unwrap().get(&key) {
+        return Ok(value.clone());
     }
+    keyring::Entry::new("org.slopmail.desktop", &key)?
+        .get_password()
+        .context("Нужен пароль. Откройте настройки ящика")
+}
+pub fn save_secret(
+    profile: &str,
+    a: &Account,
+    side: &str,
+    input: &str,
+    remember: bool,
+) -> Result<()> {
+    let key = credential_key(profile, a, side)?;
+    let entry = keyring::Entry::new("org.slopmail.desktop", &key)?;
+    let value = if input.is_empty() {
+        if let Some(v) = SESSION.lock().unwrap().get(&key).cloned() {
+            v
+        } else {
+            match entry.get_password() {
+                Ok(v) => v,
+                Err(keyring::Error::NoEntry) => return Ok(()),
+                Err(e) => return Err(e.into()),
+            }
+        }
+    } else {
+        input.to_owned()
+    };
+    if remember {
+        entry.set_password(&value)?;
+        SESSION.lock().unwrap().remove(&key);
+    } else {
+        match entry.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => (),
+            Err(e) => return Err(e.into()),
+        };
+        SESSION.lock().unwrap().insert(key, value);
+    }
+    Ok(())
 }
 fn socket(s: &Server) -> Result<TcpStream> {
     let mut last = None;
@@ -92,21 +133,22 @@ pub fn test(a: &Account, side: &str, pw: &str) -> Result<()> {
     }
     Ok(())
 }
-pub fn sync(c: &mut Connection, a: &Account, pw: &str) -> Result<()> {
+pub fn sync(c: &mut Connection, a: &Account, pw: &str) -> Result<usize> {
     if a.incoming.proto == "pop3" {
         let mut p = pop_login(a, pw)?;
         return pop_sync(c, a, &mut p);
     }
     let mut session = imap_login(a, pw)?;
-    imap_sync(c, a, &mut session)?;
+    let count = imap_sync(c, a, &mut session)?;
     session.logout()?;
-    Ok(())
+    Ok(count)
 }
 pub fn imap_sync<T: Read + Write>(
     c: &mut Connection,
     a: &Account,
     session: &mut imap::Session<T>,
-) -> Result<()> {
+) -> Result<usize> {
+    let mut count = 0;
     let folders = session.list(Some(""), Some("*"))?;
     for f in folders.iter().filter(|f| {
         !f.attributes()
@@ -187,6 +229,10 @@ pub fn imap_sync<T: Read + Write>(
                 let t = c.transaction()?;
                 mime::save(&t, &a.id, folder, &uid, raw, outgoing, seen)?;
                 t.commit()?;
+                if old == Some(valid) && folder.eq_ignore_ascii_case("INBOX") && !outgoing && !seen
+                {
+                    count += 1;
+                }
             }
         }
         let saved = c
@@ -204,7 +250,7 @@ pub fn imap_sync<T: Read + Write>(
         }
         t.commit()?;
     }
-    Ok(())
+    Ok(count)
 }
 fn ok<R: BufRead>(p: &mut R) -> Result<()> {
     let mut s = String::new();
@@ -256,7 +302,13 @@ pub fn pop_sync<T: Read + Write>(
     c: &mut Connection,
     a: &Account,
     p: &mut BufReader<T>,
-) -> Result<()> {
+) -> Result<usize> {
+    let mut count = 0;
+    let initialized: bool = c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM folders WHERE account=? AND name='INBOX')",
+        [&a.id],
+        |r| r.get(0),
+    )?;
     pop_cmd(p, "UIDL").context(
         "Сервер не поддерживает UIDL или недоступен. Загрузка остановлена для защиты от дублей",
     )?;
@@ -278,12 +330,16 @@ pub fn pop_sync<T: Read + Write>(
             mime::save(&t, &a.id, "INBOX", uid, &raw, false, false)?;
             t.execute("INSERT INTO pop_history VALUES(?,?)", params![a.id, uid])?;
             t.commit()?;
+            if initialized {
+                count += 1;
+            }
         }
         if !a.keep {
             pop_cmd(p, &format!("DELE {n}"))?;
         }
     }
-    pop_cmd(p, "QUIT")
+    pop_cmd(p, "QUIT")?;
+    Ok(count)
 }
 
 // Explicit, opt-in verification against an operator-specified mailbox. Ordinary CI

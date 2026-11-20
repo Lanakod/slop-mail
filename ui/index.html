@@ -7,6 +7,12 @@
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
+    <div id="titlebar" hidden>
+      <div data-tauri-drag-region>Slop Mail</div>
+      <button id="minimize" aria-label="Свернуть">−</button
+      ><button id="maximize" aria-label="Развернуть или восстановить">□</button
+      ><button id="winclose" aria-label="Закрыть окно">×</button>
+    </div>
     <header>
       <div class="brand"><i>✉</i> Slop Mail</div>
       <div class="tools">
@@ -15,7 +21,8 @@
         ><button id="contacts">☷ Контакты</button
         ><button id="queue">⇧ Очередь</button>
       </div>
-      <button id="theme" title="Сменить тему" aria-label="Сменить тему">
+      <button id="settings" title="Настройки" aria-label="Настройки">⚙</button
+      ><button id="theme" title="Сменить тему" aria-label="Сменить тему">
         ◐
       </button>
     </header>
@@ -44,7 +51,10 @@
         <div class="listhead">
           <button id="navtoggle" title="Профили и папки">☰</button>
           <h1 id="foldertitle">Вся почта</h1>
-          <span id="count">0</span>
+          <select id="sort" aria-label="Сортировка по дате">
+            <option value="newest">Сначала новые</option>
+            <option value="oldest">Сначала старые</option></select
+          ><span id="count">0</span>
         </div>
         <div id="threads"></div>
       </section>
