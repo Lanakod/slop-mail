@@ -1,3 +1,6 @@
+import { addressBook } from "./book.js";
+import { recipientEditor, recipientFields } from "./recipients.js";
+import { snippetMenu } from "./snippets.js";
 import {
   prefs,
   persist,
@@ -21,6 +24,7 @@ let pid = "",
   readerVersion = 0;
 let selection = { account: "", folder: "" },
   syncProfile = "";
+let quickView = "";
 let draftWrites = Promise.resolve();
 const ask = (text) => api("confirm", { text });
 const status = (t) => {
@@ -43,6 +47,7 @@ const action = (fn) => async (e) => {
 };
 const click = (id, fn) => ($(id).onclick = action(fn));
 function modal(title, content) {
+  $("dialog").classList.remove("wide");
   $("title").textContent = title;
   $("content").innerHTML = content + '<div id="error" role="alert"></div>';
   if (!$("dialog").open) $("dialog").showModal();
@@ -101,6 +106,7 @@ async function switchProfile() {
   const active = pid;
   localStorage.setItem("profile", pid);
   thread = "";
+  quickView = "";
   readerVersion++;
   listVersion++;
   $("threads").innerHTML = empty("Загрузка почты…");
@@ -138,8 +144,17 @@ async function switchProfile() {
     background(active, prefs.startup);
   }
 }
+const views = {
+  unread: "● Непрочитанные",
+  starred: "★ Со звездой",
+  files: "▧ С вложениями",
+  drafts: "✎ Черновики",
+};
 function renderNav() {
   let html = '<button data-index="-1">▤　Вся почта</button>';
+  for (const [id, label] of Object.entries(views)) {
+    html += `<button data-view="${id}" class="${quickView === id ? "active" : ""}">${h(label)}</button>`;
+  }
   accounts.forEach((a, i) => {
     html += `<div class="accountname"><button data-account="${i}" title="${h(a.address)}">▣　${h(a.name || a.address)}</button><button data-edit="${i}" title="Настройки ящика">⚙</button></div>`;
     folders.forEach((f, j) => {
@@ -148,6 +163,16 @@ function renderNav() {
     });
   });
   $("folders").innerHTML = html;
+  for (const b of $("folders").querySelectorAll("[data-view]"))
+    b.onclick = action(async () => {
+      quickView = b.dataset.view;
+      selection = { account: "", folder: "" };
+      $("search").value = "";
+      document.body.classList.remove("navopen", "reading");
+      renderNav();
+      renderFilters();
+      await list();
+    });
   $("folders")
     .querySelectorAll("[data-edit]")
     .forEach(
@@ -167,9 +192,12 @@ function renderNav() {
             : { account: "", folder: "" };
       b.classList.toggle(
         "active",
-        selection.account === f.account && selection.folder === f.folder,
+        !quickView &&
+          selection.account === f.account &&
+          selection.folder === f.folder,
       );
       b.onclick = action(async () => {
+        quickView = "";
         selection = f;
         $("search").value = "";
         document.body.classList.remove("navopen", "reading");
@@ -197,7 +225,47 @@ async function list() {
     q = $("search").value;
   let acc = $("fa")?.value || "",
     folder = $("ff")?.value || "";
+  if (quickView === "drafts") {
+    await draftWrites;
+    const rows = await api("drafts");
+    if (version !== listVersion) return;
+    const drafts = rows
+      .map((r) => ({
+        ...JSON.parse(r.data),
+        slot: r.slot,
+        modified: r.modified,
+      }))
+      .filter((d) =>
+        [d.to, d.cc, d.bcc, d.subject, d.body]
+          .join(" ")
+          .toLowerCase()
+          .includes(q.toLowerCase()),
+      );
+    $("foldertitle").textContent = "Черновики";
+    $("count").textContent = drafts.length;
+    $("threads").innerHTML =
+      drafts
+        .map(
+          (d) =>
+            `<div class="draftrow"><button class="thread"><time>${d.modified ? h(date(d.modified)) : ""}</time><strong>${h(d.subject || "Без темы")}</strong><span class="meta">${h([d.to, d.cc, d.bcc].filter(Boolean).join(", ") || "Без получателей")}</span><small>${h(d.body)}</small></button><button class="dropdraft" aria-label="Удалить черновик">×</button></div>`,
+        )
+        .join("") || empty("Черновиков нет");
+    $("threads")
+      .querySelectorAll(".draftrow")
+      .forEach((el, i) => {
+        const d = drafts[i];
+        el.querySelector(".thread").onclick = action(() => compose("", d.slot));
+        el.querySelector(".dropdraft").onclick = action(async () => {
+          if (await ask("Удалить черновик?")) {
+            await api("remove_draft", { slot: d.slot });
+            await list();
+          }
+        });
+      });
+    return;
+  }
   let data = await api("list", {
+    view: quickView,
     q,
     sort: prefs.sort,
     account: acc,
@@ -209,7 +277,10 @@ async function list() {
   if (version !== listVersion) return;
   $("foldertitle").textContent = q
     ? "Результаты поиска"
-    : folder || accounts.find((a) => a.id === acc)?.name || "Вся почта";
+    : views[quickView] ||
+      folder ||
+      accounts.find((a) => a.id === acc)?.name ||
+      "Вся почта";
   $("count").textContent = data.length;
   $("threads").innerHTML =
     data
@@ -261,7 +332,37 @@ async function openThread(key, hit) {
       b.onclick = action(fn);
       parent.append(b);
     };
+    for (const [selector, raw] of [
+      ["strong", m.sender],
+      [".meta", m.recipients],
+    ]) {
+      const node = art.querySelector(selector);
+      const participants = await api("participants", { value: raw }).catch(
+        () => [],
+      );
+      if (token !== readerVersion) return;
+      if (participants.length) {
+        node.replaceChildren();
+        if (selector === ".meta") node.append("Кому: ");
+        participants.forEach((p, i) => {
+          if (i) node.append(", ");
+          btn(node, p.name || p.email, () =>
+            book.participant(p.email, p.name || ""),
+          );
+          node.lastElementChild.title = p.email;
+        });
+        if (selector === ".meta") node.append(" · " + date(m.stamp));
+      }
+    }
     let actions = art.querySelector(".actions");
+    btn(
+      actions,
+      m.starred ? "★ Убрать звезду" : "☆ Поставить звезду",
+      async () => {
+        await api("star", { id: m.id, on: !m.starred });
+        await openThread(key, m.id);
+      },
+    );
     if (m.html) {
       btn(actions, "HTML", () => htmlView(art, m, files, false));
       btn(actions, "Загрузить внешние изображения", () =>
@@ -393,12 +494,19 @@ function accountDialog(edit) {
     await switchProfile();
   });
 }
-async function composer(host, parent, all, retarget) {
+async function composer(
+  host,
+  parent,
+  all,
+  retarget,
+  initialTo = "",
+  newSlot = "",
+) {
   if (!accounts.length) {
     accountDialog(null);
     return;
   }
-  const slot = parent ? "reply:" + parent.thread : "new",
+  const slot = parent ? "reply:" + parent.thread : newSlot,
     active = pid;
   await draftWrites;
   let draft = await api("draft", { slot });
@@ -408,7 +516,7 @@ async function composer(host, parent, all, retarget) {
   let to =
     parent && (!draft || retarget)
       ? await api("reply", { id: parent.id, all })
-      : draft?.to || "";
+      : draft?.to || initialTo;
   if (!host.isConnected || active !== pid) return;
   let files = draft?.files || [],
     parentId = retarget ? parent?.id : draft?.parent || parent?.id || null;
@@ -425,11 +533,19 @@ async function composer(host, parent, all, retarget) {
         ) +
         "</select></label>"
       : ""
-  }</div><label>Кому<input data-field="to" value="${h(to)}" placeholder="name@example.org, …" list="addresses"></label><div data-field="suggest" class="actions"></div><label ${parent ? "hidden" : ""}>Тема<input data-field="subject" value="${h(draft?.subject || (parent ? (/^re:/i.test(parent.subject) ? parent.subject : "Re: " + parent.subject) : ""))}"></label><textarea aria-label="Текст письма" data-field="body" placeholder="${parent ? "Ответить в переписке…" : "Текст письма…"}">${h(draft?.body || "")}</textarea><div class="signature" data-field="signature"></div><div data-field="files"></div><div class="hint" data-field="preview"></div><div class="actions"><button data-field="attach">＋ Вложение</button><button class="accent" data-field="send">Отправить ↗</button></div></div>`;
+  }</div>${recipientFields()}<div data-field="suggest" class="actions"></div><label ${parent ? "hidden" : ""}>Тема<input data-field="subject" value="${h(draft?.subject || (parent ? (/^re:/i.test(parent.subject) ? parent.subject : "Re: " + parent.subject) : ""))}"></label><textarea aria-label="Текст письма" data-field="body" placeholder="${parent ? "Ответить в переписке…" : "Текст письма…"}">${h(draft?.body || "")}</textarea><button data-field="templates">Шаблоны ответов</button><div data-field="snippets" hidden></div><div class="signature" data-field="signature"></div><div data-field="files"></div><div class="hint" data-field="preview"></div><div class="actions"><button data-field="attach">＋ Вложение</button><button class="accent" data-field="send">Отправить ↗</button></div></div>`;
+  const values = recipientEditor(
+    host,
+    { to, cc: draft?.cc || "", bcc: draft?.bcc || "" },
+    people,
+    (op, args) => api(op, args, active),
+    () => save(),
+    action,
+  );
   const data = () => ({
     slot,
     account: q("sender").value,
-    to: q("to").value,
+    ...values(),
     personal: q("mode")?.value === "personal",
     parent: parentId,
     subject: q("subject").value,
@@ -456,16 +572,15 @@ async function composer(host, parent, all, retarget) {
     const d = data();
     q("send").disabled = true;
     try {
-      let to = await api("preview", { to: d.to }, active);
+      let targets = await api("recipient_plan", d, active);
+      let to = targets.map((r) => r.email);
       if (version !== previewVersion) return;
       q("preview").textContent =
         (accounts.find((a) => a.id === d.account)?.address || "") +
         " → " +
         to.length +
         " · " +
-        (d.personal
-          ? "Каждый видит только свой адрес"
-          : "Всем видны: " + to.join(", "));
+        (d.personal ? "Каждый видит только свой адрес" : visibility(targets));
       q("send").disabled = false;
     } catch {
       if (version === previewVersion)
@@ -479,34 +594,24 @@ async function composer(host, parent, all, retarget) {
       .catch(err);
     preview();
   };
-  host.oninput = () => {
-    let term = q("to").value.split(",").at(-1).trim().toLowerCase();
-    q("suggest").replaceChildren();
-    if (term && document.activeElement === q("to"))
-      for (const person of people) {
-        for (const email of person.emails.split(", ")) {
-          if (
-            q("suggest").children.length >= 6 ||
-            !(person.name + " " + email).toLowerCase().includes(term)
-          )
-            continue;
-          let b = document.createElement("button");
-          b.textContent = person.name + " · " + email;
-          b.onclick = () => {
-            let parts = q("to").value.split(",");
-            parts.pop();
-            q("to").value = [...parts, email]
-              .map((s) => s.trim())
-              .filter(Boolean)
-              .join(", ");
-            q("suggest").replaceChildren();
-            save();
-          };
-          q("suggest").append(b);
-        }
-      }
-    save();
+  host.oninput = (e) => {
+    if (!q("snippets").contains(e.target)) save();
   };
+  q("templates").onclick = action(() => {
+    const body = q("body"),
+      start = body.selectionStart,
+      end = body.selectionEnd;
+    return snippetMenu(
+      q("snippets"),
+      (op, args) => api(op, args, active),
+      action,
+      (text) => {
+        body.setRangeText(text, start, end, "end");
+        body.focus();
+        save();
+      },
+    );
+  });
   q("sender").onchange = () => {
     signature =
       accounts.find((a) => a.id === q("sender").value)?.signature || "";
@@ -516,7 +621,7 @@ async function composer(host, parent, all, retarget) {
   q("signature").textContent = signature;
   renderFiles();
   preview();
-  if (retarget) save();
+  if (retarget || initialTo) save();
   q("attach").onclick = action(async () => {
     files.push(...(await api("pick")));
     renderFiles();
@@ -529,11 +634,12 @@ async function composer(host, parent, all, retarget) {
     try {
       await draftWrites;
       const d = data();
-      let to = await api("preview", { to: d.to }, active);
+      let targets = await api("recipient_plan", d, active);
+      let to = targets.map((r) => r.email);
       const from = accounts.find((a) => a.id === d.account)?.address;
       if (
         !(await ask(
-          `От: ${from}\nПолучателей: ${to.length}\n${d.personal ? "У каждого в поле To только собственный адрес" : "Всем видны адреса: " + to.join(", ")}\nОтправить?`,
+          `От: ${from}\nПолучателей: ${to.length}\n${d.personal ? "У каждого в поле To только собственный адрес" : visibility(targets)}\nОтправить?`,
         ))
       )
         return;
@@ -554,10 +660,26 @@ async function composer(host, parent, all, retarget) {
     }
   });
 }
-async function compose() {
+function visibility(targets) {
+  const visible = targets.filter((r) => r.field !== "bcc").map((r) => r.email),
+    hidden = targets.filter((r) => r.field === "bcc").map((r) => r.email);
+  return (
+    "Всем видны: " +
+    (visible.join(", ") || "—") +
+    (hidden.length ? " · Скрытая копия: " + hidden.join(", ") : "")
+  );
+}
+async function compose(to = "", slot = "") {
   if (!pid) return;
   modal("Новое письмо", '<div id="composeform"></div>');
-  await composer($("composeform"), null, false, false);
+  await composer(
+    $("composeform"),
+    null,
+    false,
+    false,
+    to,
+    slot || "new:" + crypto.randomUUID(),
+  );
 }
 async function refreshFolders() {
   const active = pid;
@@ -613,40 +735,21 @@ async function background(active, check = true) {
     err(e);
   }
 }
-async function contacts() {
-  people = await api("contacts");
-  renderNav();
-  modal(
-    "Контакты",
-    '<div id="people"></div><label>Имя<input id="cname"></label><label>Email-адреса через запятую<input id="cemails"></label><button id="storecontact" class="accent">Сохранить контакт</button>',
-  );
-  let edit = "";
-  for (const p of people) {
-    let row = document.createElement("div");
-    row.className = "entry";
-    row.innerHTML = `<strong>${h(p.name)}</strong> · ${h(p.emails)} <button>Изменить</button> <button>Удалить</button>`;
-    row.querySelectorAll("button")[0].onclick = () => {
-      edit = p.id;
-      $("cname").value = p.name;
-      $("cemails").value = p.emails;
-    };
-    row.querySelectorAll("button")[1].onclick = action(async () => {
-      if (await ask("Удалить контакт?")) {
-        await api("remove_contact", { id: p.id });
-        await contacts();
-      }
-    });
-    $("people").append(row);
-  }
-  click("storecontact", async () => {
-    await api("contact", {
-      id: edit,
-      name: $("cname").value,
-      emails: $("cemails").value,
-    });
-    await contacts();
-  });
-}
+const book = addressBook({
+  api,
+  modal,
+  click,
+  action,
+  shut,
+  compose,
+  openThread,
+  date,
+  onChange: (rows) => {
+    people = rows;
+    renderNav();
+  },
+  profile: () => pid,
+});
 const states = {
   pending: "В очереди",
   sending: "Отправляется",
@@ -709,8 +812,8 @@ click("theme", () => {
   localStorage.setItem("theme", document.documentElement.className);
 });
 click("sync", () => synchronize(pid));
-click("compose", compose);
-click("contacts", contacts);
+click("compose", () => compose());
+click("contacts", () => book.open());
 click("queue", queue);
 click("close", shut);
 click("navtoggle", () => document.body.classList.toggle("navopen"));
@@ -742,7 +845,7 @@ document.addEventListener("keydown", (e) => {
     $("search").focus();
   } else if (key === "n" && !$("dialog").open) {
     e.preventDefault();
-    action(compose)(e);
+    action(() => compose())(e);
   } else if (key === "r" && !$("dialog").open) {
     e.preventDefault();
     $("quick")?.querySelector("textarea")?.focus();

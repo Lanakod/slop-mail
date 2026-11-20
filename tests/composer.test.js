@@ -44,8 +44,25 @@ test("composer preserves typed text, recipient visibility and sender signature a
             return boxes;
           case "preview":
             return args.to.split(",").filter(Boolean);
+          case "recipient_plan":
+            return ["to", "cc", "bcc"].flatMap((field) =>
+              (args[field] || "")
+                .split(",")
+                .filter(Boolean)
+                .map((email) => ({ email, field })),
+            );
+          case "drafts":
+            return draft
+              ? [
+                  {
+                    slot: draft.slot,
+                    data: JSON.stringify(draft),
+                    modified: 42,
+                  },
+                ]
+              : [];
           case "draft":
-            return draft;
+            return draft?.slot === args.slot ? draft : null;
           case "save_draft":
             draft = args.data;
             return;
@@ -74,7 +91,9 @@ test("composer preserves typed text, recipient visibility and sender signature a
   assert.equal(q("signature").textContent, "signature-home");
   assert.match(q("preview").textContent, /2.*только свой адрес/);
   click("close");
-  click("compose");
+  w.document.querySelector('[data-view="drafts"]').click();
+  await tick();
+  w.document.querySelector(".draftrow .thread").click();
   await tick();
   assert.equal(q("sender").value, "home");
   assert.equal(q("body").value, "Typed text");

@@ -576,3 +576,95 @@ body.windows {
     top: 90px;
   }
 }
+dialog.wide {
+  width: min(880px, 94vw);
+}
+.book {
+  display: grid;
+  grid-template-columns: minmax(180px, 34%) 1fr;
+  height: min(64vh, 660px);
+  min-height: 230px;
+}
+.bookrail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  padding-right: 12px;
+  border-right: 1px solid var(--line);
+}
+#personlist {
+  overflow: auto;
+  flex: 1;
+}
+.person,
+.emailrow {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin-bottom: 3px;
+  overflow-wrap: anywhere;
+}
+.person strong,
+.person small {
+  display: block;
+}
+.person[aria-pressed="true"] {
+  background: var(--active);
+  color: white;
+}
+#card {
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 8px 14px;
+}
+.addrrow {
+  display: grid;
+  grid-template-columns: 55px 2fr 1fr auto;
+  gap: 6px;
+  align-items: end;
+  margin-bottom: 8px;
+}
+.chips,
+.chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.chip {
+  border: 1px solid var(--line);
+  background: var(--out);
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 12px;
+}
+.chip select,
+.chip button {
+  font-size: 11px;
+  padding: 2px;
+}
+.draftrow {
+  display: flex;
+  align-items: center;
+}
+.dropdraft {
+  margin: 4px;
+}
+.composer {
+  max-height: 52vh;
+  overflow: auto;
+}
+dialog .composer {
+  max-height: none;
+}
+.recipient-row input {
+  width: 100%;
+}
+.bubble > strong button,
+.bubble > .meta button {
+  padding: 1px 3px;
+  font: inherit;
+}
