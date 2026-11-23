@@ -22,7 +22,7 @@ native-tls = "0.2"
 lettre = { version = "0.11", features = ["smtp-transport", "builder", "native-tls"] }
 sha2 = "0.10"
 mailparse = "0.16"
-base64 = "0.22"
+base64 = "0.23"
 open = "5"
 ammonia = "4"
 html2text = "0.16"
