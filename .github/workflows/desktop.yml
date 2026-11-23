@@ -39,7 +39,7 @@ jobs:
         run: sh scripts/package-macos.sh
       - if: runner.os == 'Windows'
         run: npm run build -- --ci --bundles nsis
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Slop-Mail-${{ matrix.artifact }}
           path: ${{ matrix.path }}
@@ -52,7 +52,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: python scripts/release-assets.py ${{ matrix.platform }}
       - if: startsWith(github.ref, 'refs/tags/v')
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: update-${{ matrix.platform }}
           path: target/release-assets/*
