@@ -25,7 +25,7 @@ mailparse = "0.16"
 base64 = "0.22"
 open = "5"
 ammonia = "4"
-html2text = "0.16"
+html2text = "0.17"
 directories = "6"
 
 tauri-plugin-updater = "2"
