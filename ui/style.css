@@ -739,3 +739,17 @@ dialog .composer {
   max-height: 90vh;
   overflow: auto;
 }
+#composeform { display:none; }
+body.compose-window { display:flex; flex-direction:column; }
+body.compose-window > header, body.compose-window > main, body.compose-window > #titlebar { display:none; }
+.compose-window #composeform { display:block; padding:16px; overflow:auto; flex:1; }
+.compose-window .composer { max-height:none; overflow:visible; }
+.compose-window footer { min-height:28px; }
+.compose-actions { position:sticky; top:0; background:var(--panel); z-index:1; padding:4px 0; }
+.rich-body { padding:9px; min-height:80px; white-space:pre-wrap; overflow-wrap:anywhere; border:1px solid var(--line); background:var(--paper); }
+.compose-window .rich-body { min-height:180px; }
+.format-tools { display:flex;gap:4px;flex-wrap:wrap; }
+.format-tools button:first-child { font-weight:bold; }
+.format-tools button:nth-child(2) {font-style:italic;}
+.drop-target {outline:3px dashed var(--active);outline-offset:-3px;}
+#changes-text {white-space:pre-wrap;font:inherit;}

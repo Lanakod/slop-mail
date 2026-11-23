@@ -249,6 +249,45 @@ pub fn test(a: &Account, side: &str, pw: &str) -> Result<Option<bool>> {
     }
     Ok(None)
 }
+pub fn save_sent(profile: &str, a: &Account, raw: &[u8]) -> Result<String> {
+    let mut session = imap_login(a, &secret(profile, a, "in")?)?;
+    let folder = append_sent(&mut session, raw)?;
+    session.logout()?;
+    Ok(folder)
+}
+pub(crate) fn append_sent<T: Read + Write>(
+    session: &mut imap::Session<T>,
+    raw: &[u8],
+) -> Result<String> {
+    use mailparse::MailHeaderMap;
+    let mid = mailparse::parse_mail(raw)?
+        .headers
+        .get_first_value("Message-ID")
+        .context("Нет Message-ID")?;
+    ensure!(
+        !mid.contains(['\r', '\n', '"', '\\']),
+        "Недопустимый Message-ID"
+    );
+    let folders = session.list(Some(""), Some("*"))?;
+    let sent = folders.iter().filter(|f| {
+        !f.attributes()
+            .contains(&imap::types::NameAttribute::NoSelect)
+    });
+    let folder=sent.clone().find(|f|f.attributes().iter().any(|attr|matches!(attr,imap::types::NameAttribute::Custom(n) if n.eq_ignore_ascii_case("\\Sent"))))
+        .or_else(||sent.clone().find(|f|["Sent","Sent Items","Sent Messages","INBOX.Sent"].iter().any(|name|name.eq_ignore_ascii_case(f.name()))));
+    let dest = folder.map(|f| f.name()).unwrap_or("Sent");
+    if folder.is_none() {
+        session.create(dest)?;
+    }
+    session.select(dest)?;
+    if session
+        .uid_search(format!("HEADER Message-ID \"{mid}\""))?
+        .is_empty()
+    {
+        session.append_with_flags(dest, raw, &[imap::types::Flag::Seen])?;
+    }
+    Ok(dest.into())
+}
 pub fn sync(c: &mut Connection, a: &Account, pw: &str) -> Result<usize> {
     if a.incoming.proto == "pop3" {
         let mut p = pop_login(a, pw)?;
@@ -653,6 +692,7 @@ fn live_pop_smtp() -> Result<()> {
     delivery::enqueue(
         &mut c,
         delivery::Compose {
+            html: String::new(),
             cc: String::new(),
             bcc: String::new(),
             account: a.id.clone(),

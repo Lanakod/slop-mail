@@ -35,6 +35,8 @@ pub struct Compose {
     pub subject: String,
     pub body: String,
     #[serde(default)]
+    pub html: String,
+    #[serde(default)]
     pub signature: String,
     pub personal: bool,
     pub parent: Option<i64>,
@@ -142,10 +144,32 @@ pub fn enqueue_batch(
         } else {
             format!("{}\r\n\r\n-- \r\n{}", d.body, d.signature)
         };
-        let message = if files.is_empty() {
-            builder.singlepart(SinglePart::plain(text))?
+        let rich = if d.html.is_empty() {
+            None
         } else {
-            let mut mp = MultiPart::mixed().singlepart(SinglePart::plain(text));
+            let signature = ammonia::clean_text(&d.signature);
+            let html = ammonia::clean(&d.html);
+            let html = if signature.is_empty() {
+                html
+            } else {
+                format!("{html}<pre>-- \n{signature}</pre>")
+            };
+            Some(
+                MultiPart::alternative()
+                    .singlepart(SinglePart::plain(text.clone()))
+                    .singlepart(SinglePart::html(html)),
+            )
+        };
+        let message = if files.is_empty() {
+            match rich {
+                Some(part) => builder.multipart(part)?,
+                None => builder.singlepart(SinglePart::plain(text))?,
+            }
+        } else {
+            let mut mp = match rich {
+                Some(part) => MultiPart::mixed().multipart(part),
+                None => MultiPart::mixed().singlepart(SinglePart::plain(text)),
+            };
             for (n, b) in &files {
                 mp = mp.singlepart(
                     Attachment::new(n.clone())
@@ -211,6 +235,40 @@ pub fn dispatch(c: &mut Connection, profile: &str) -> Result<()> {
                 .map_err(smtp_failure)
         })?;
     }
+    let pending = store::rows(c, "SELECT job FROM sent_copies WHERE folder IS NULL", &[])?;
+    for row in pending.as_array().unwrap() {
+        let job = row["job"].as_str().unwrap();
+        copy_sent(c, profile, job)?;
+    }
+    Ok(())
+}
+pub fn copy_sent(c: &Connection, profile: &str, job: &str) -> Result<()> {
+    if !c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sent_copies WHERE job=? AND folder IS NULL)",
+        [job],
+        |r| r.get::<_, bool>(0),
+    )? {
+        return Ok(());
+    }
+    let (account, raw): (String, Vec<u8>) =
+        c.query_row("SELECT account,raw FROM queue WHERE id=?", [job], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })?;
+    let a = store::account(c, &account)?;
+    match network::save_sent(profile, &a, &raw) {
+        Ok(folder) => {
+            c.execute(
+                "UPDATE sent_copies SET folder=?,error='' WHERE job=?",
+                params![folder, job],
+            )?;
+        }
+        Err(error) => {
+            c.execute(
+                "UPDATE sent_copies SET error=? WHERE job=?",
+                params![error.to_string(), job],
+            )?;
+        }
+    }
     Ok(())
 }
 pub fn smtp_failure(e: lettre::transport::smtp::Error) -> (&'static str, String) {
@@ -255,6 +313,9 @@ where
     let (state, error) = match result {
         Ok(()) => {
             mime::save(&t, &a.id, "Отправленные (локально)", id, &raw, true, true)?;
+            if a.incoming.proto == "imap" {
+                t.execute("INSERT INTO sent_copies(job) VALUES(?)", [id])?;
+            }
             ("sent", String::new())
         }
         Err(e) => e,

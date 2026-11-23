@@ -91,7 +91,42 @@ pub fn show_main(app: &AppHandle) {
 }
 
 #[tauri::command]
+pub async fn compose_window(
+    app: AppHandle,
+    profile: String,
+    slot: String,
+    to: String,
+    subject: String,
+    body: String,
+) -> Result<(), String> {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    let mut hash = DefaultHasher::new();
+    (&profile, &slot).hash(&mut hash);
+    let label = format!("compose-{:x}", hash.finish());
+    if let Some(window) = app.get_webview_window(&label) {
+        window
+            .show()
+            .and_then(|_| window.unminimize())
+            .and_then(|_| window.set_focus())
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    let context =
+        serde_json::json!({ "profile":profile,"slot":slot,"to":to,"subject":subject,"body":body });
+    tauri::WebviewWindowBuilder::new(&app, label, tauri::WebviewUrl::App("index.html".into()))
+        .initialization_script(format!("window.__composeContext = {context};"))
+        .title("Новое письмо · Slop Mail")
+        .inner_size(760., 670.)
+        .min_inner_size(440., 380.)
+        .build()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+#[tauri::command]
 pub fn finish_close(window: tauri::WebviewWindow) -> Result<(), String> {
+    if window.label().starts_with("compose-") {
+        return window.destroy().map_err(|e| e.to_string());
+    }
     #[cfg(windows)]
     if crate::windows_tray::is_quitting(&window) {
         return window.destroy().map_err(|e| e.to_string());

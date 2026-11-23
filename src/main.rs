@@ -34,6 +34,7 @@ fn main() {
             scheduler::set_schedule,
             api::request,
             desktop::finish_close,
+            desktop::compose_window,
             desktop::update,
             desktop::tray_counts,
             desktop::notify_mail

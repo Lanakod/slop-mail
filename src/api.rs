@@ -42,7 +42,11 @@ pub(crate) fn run(op: &str, pid: &str, a: Value) -> Result<Value> {
                     == rfd::MessageDialogResult::Yes
             ))
         }
-        "about" => return Ok(json!({"version":env!("CARGO_PKG_VERSION"),"windows":cfg!(windows)})),
+        "about" => {
+            return Ok(
+                json!({"version":env!("CARGO_PKG_VERSION"),"changelog":include_str!("../CHANGELOG.md"),"windows":cfg!(windows)}),
+            )
+        }
         "discover" => return crate::discovery::discover(s("address")),
         "profiles" => return Ok(json!(store::profiles()?)),
         "profile" => {
@@ -124,7 +128,28 @@ pub(crate) fn run(op: &str, pid: &str, a: Value) -> Result<Value> {
         "thread" => {
             let t = c.transaction()?;
             t.execute("UPDATE messages SET seen=1,pending_seen=1 WHERE thread=? AND id=? AND seen=0", params![s("thread"),a["hit"].as_i64()])?;
-            let mut data = store::rows(&t, "SELECT id,account,folder,thread,stamp,subject,sender,recipients,reply_to,body,html,outgoing,EXISTS(SELECT 1 FROM stars WHERE message=messages.id) AS starred FROM messages WHERE thread=? ORDER BY stamp,id", &[&s("thread")])?;
+            // A local receipt and its downloaded IMAP copy represent one bubble.
+            // Keep the selected physical row so its actions still target the right folder.
+            let mut data = store::rows(&t, "
+                WITH copies AS (
+                    SELECT m.account,m.mid,c.folder AS remote_folder,c.job
+                    FROM messages m JOIN sent_copies c ON c.job=m.uid
+                    WHERE m.thread=?1 AND c.folder IS NOT NULL
+                ), ranked AS (
+                    SELECT m.*,c.folder AS copy_folder,c.job IS NOT NULL AND c.folder IS NULL AS copy_pending,
+                        row_number() OVER (
+                            PARTITION BY COALESCE(pair.job,CAST(m.id AS TEXT))
+                            ORDER BY (m.id IS ?2) DESC,(m.uid=pair.job) DESC,m.id
+                        ) AS position
+                    FROM messages m LEFT JOIN sent_copies c ON m.uid=c.job
+                    LEFT JOIN copies pair ON pair.account=m.account AND pair.mid=m.mid
+                        AND (pair.job=m.uid OR pair.remote_folder=m.folder)
+                    WHERE m.thread=?1
+                )
+                SELECT id,account,folder,thread,stamp,subject,sender,recipients,reply_to,body,html,outgoing,
+                    copy_folder,copy_pending,EXISTS(SELECT 1 FROM stars WHERE message=ranked.id) AS starred
+                FROM ranked WHERE position=1 ORDER BY stamp,id",
+                &[&s("thread"), &a["hit"].as_i64()])?;
             t.commit()?;
             for m in data.as_array_mut().unwrap(){m["authors"]=crate::book::participants(m["sender"].as_str().unwrap_or(""));m["addressees"]=crate::book::participants(m["recipients"].as_str().unwrap_or(""));}
             Ok(data)
@@ -160,7 +185,8 @@ pub(crate) fn run(op: &str, pid: &str, a: Value) -> Result<Value> {
             delivery::dispatch(&mut c, pid)?;
             Ok(Value::Null)
         }
-        "queue" => store::rows(&c, "SELECT id,account,recipients,state,error,created,batch FROM queue ORDER BY rowid DESC", &[]),
+        "queue" => store::rows(&c, "SELECT q.id,q.account,q.recipients,q.state,q.error,q.created,q.batch,c.job AS copy_job,c.folder AS copy_folder,c.error AS copy_error FROM queue q LEFT JOIN sent_copies c ON c.job=q.id ORDER BY q.rowid DESC", &[]),
+        "retry_copy"=>{let _guard=DELIVERY.lock().map_err(|_|anyhow::anyhow!("Ошибка очереди"))?;delivery::copy_sent(&c,pid,s("id"))?;Ok(Value::Null)}
         "retry" => {
             c.execute("UPDATE queue SET state='pending',error='' WHERE id=? AND state IN ('failed','unknown')", [s("id")])?;
             Ok(Value::Null)

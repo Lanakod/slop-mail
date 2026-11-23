@@ -67,7 +67,7 @@ export function applyConfig(config, address) {
   get("inlogin").value = expand(config.login);
   get("outlogin").value = expand(config.smtp_login);
 }
-export function settingsMenu({ modal, click, api, schedule, flush, rules }) {
+export function settingsMenu({ modal, click, api, schedule, flush, rules, showChanges }) {
   async function settings() {
     const about = await api("about");
     modal(
@@ -91,7 +91,7 @@ export function settingsMenu({ modal, click, api, schedule, flush, rules }) {
         prefs.presets.map((x) => [x.id, x.name]),
         null,
       )}</select><div class="actions"><button id="newpreset">Создать</button><button id="editpreset" ${prefs.presets.length ? "" : "disabled"}>Изменить</button><button id="delpreset" ${prefs.presets.length ? "" : "disabled"}>Удалить</button></div></fieldset>
-      <button id="mail-rules">Правила для входящих</button><button id="updates">Проверить обновления на GitHub</button><div id="updateinfo" role="status"></div>`,
+      <button id="changes-show">История изменений</button><button id="mail-rules">Правила для входящих</button><button id="updates">Проверить обновления на GitHub</button><div id="updateinfo" role="status"></div>`,
     );
     get("startup").onchange = () => {
       prefs.startup = get("startup").checked;
@@ -113,6 +113,7 @@ export function settingsMenu({ modal, click, api, schedule, flush, rules }) {
       persist();
       schedule();
     };
+    click("changes-show",()=>showChanges(about));
     click("mail-rules", rules);
     click("newpreset", () => edit(null));
     click("editpreset", () =>

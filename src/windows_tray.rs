@@ -43,6 +43,11 @@ pub fn setup(app: &App) -> anyhow::Result<()> {
                     let quitting = app.state::<Quitting>();
                     quitting.0.store(true, Ordering::SeqCst);
                     // Use normal close handling so the composer can flush pending drafts.
+                    for (label, editor) in app.webview_windows() {
+                        if label.starts_with("compose-") {
+                            let _ = editor.close();
+                        }
+                    }
                     if window.close().is_err() {
                         quitting.0.store(false, Ordering::SeqCst);
                     }

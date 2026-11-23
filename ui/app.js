@@ -1,4 +1,5 @@
-import { chatBody } from "./mail-links.js";
+import { richEditor } from "./rich-editor.js";
+import { chatBody, mailtoDraft } from "./mail-links.js";
 import { rulesPanel } from "./organize.js";
 import { threadList } from "./thread-list.js";
 import { addressBook } from "./book.js";
@@ -18,6 +19,7 @@ import { escapeHtml as h, options, basename } from "./helpers.js";
 const $ = (id) => document.getElementById(id);
 const api = (op, args = {}, profile = pid) =>
   window.__TAURI__.core.invoke("request", { op, args, profile });
+const composeContext = window.__composeContext;
 let pid = "",
   accounts = [],
   folders = [],
@@ -379,7 +381,7 @@ async function openThread(key, hit) {
     for (const anchor of art.querySelectorAll("a"))
       anchor.onclick = action(async (e) => {
         e.preventDefault();
-        await api("open_url", { url: anchor.href });
+        await followLink(anchor.href);
       });
     const btn = (parent, text, fn) => {
       let b = document.createElement("button");
@@ -404,6 +406,18 @@ async function openThread(key, hit) {
         });
         if (selector === ".meta") node.append(" · " + date(m.stamp));
       }
+    }
+    if (m.outgoing) {
+      const stamp = document.createElement("small");
+      stamp.className = "meta";
+      stamp.textContent = m.copy_folder
+        ? "Сохранено на сервере · " + m.copy_folder
+        : m.copy_pending
+          ? "Ожидает копирования на сервер"
+          : m.folder === "Отправленные (локально)"
+            ? "Отправлено · локальная копия"
+            : "На сервере · " + m.folder;
+      art.append(stamp);
     }
     let actions = art.querySelector(".actions");
     btn(
@@ -475,14 +489,14 @@ async function htmlView(art, m, files, remote) {
   for (const a of template.content.querySelectorAll("a")) {
     const url = a.getAttribute("href");
     a.removeAttribute("href");
-    if (!/^https?:\/\//i.test(url || "")) continue;
+    if (!/^(https?:\/\/|mailto:)/i.test(url || "")) continue;
     const link = document.createElement("a");
     link.href = url;
     link.textContent = a.textContent || url;
     link.title = url;
     link.onclick = action(async (e) => {
       e.preventDefault();
-      await api("open_url", { url });
+      await followLink(url);
     });
     links.append(link, " ");
   }
@@ -600,35 +614,56 @@ async function composer(
   let files = draft?.files || [],
     parentId = retarget ? parent?.id : draft?.parent || parent?.id || null;
   const q = (k) => host.querySelector('[data-field="' + k + '"]');
-  host.innerHTML = `<div class="composer"><div class="line"><label>Отправитель<select data-field="sender">${accountOptions(sender)}</select></label>${
-    !parent
-      ? '<label>Режим<select data-field="mode">' +
-        options(
-          [
-            ["group", "Общее письмо"],
-            ["personal", "Персональная рассылка"],
-          ],
-          draft?.personal ? "personal" : "group",
-        ) +
-        "</select></label>"
-      : ""
-  }</div>${recipientFields()}<div data-field="suggest" class="actions"></div><label ${parent ? "hidden" : ""}>Тема<input data-field="subject" value="${h(draft?.subject || (parent ? (/^re:/i.test(parent.subject) ? parent.subject : "Re: " + parent.subject) : ""))}"></label><textarea aria-label="Текст письма" data-field="body" placeholder="${parent ? "Ответить в переписке…" : "Текст письма…"}">${h(draft?.body || "")}</textarea><button data-field="templates">Шаблоны ответов</button><div data-field="snippets" hidden></div><div class="signature" data-field="signature"></div><div data-field="files"></div><div class="hint" data-field="preview"></div><div class="actions"><button data-field="attach">＋ Вложение</button><button class="accent" data-field="send">Отправить ↗</button></div></div>`;
-  const values = recipientEditor(
+  host.innerHTML = `<div class="composer">
+    <div class="actions compose-actions"><button type="button" class="accent" data-field="send">Отправить ↗</button><button type="button" data-field="attach">＋ Вложение</button></div>
+    ${
+      parent
+        ? ""
+        : `<div class="line"><label>Отправитель<select data-field="sender">${accountOptions(sender)}</select></label>
+    <label>Режим<select data-field="mode">${options(
+      [
+        ["group", "Общее письмо"],
+        ["personal", "Персональная рассылка"],
+      ],
+      draft?.personal ? "personal" : "group",
+    )}</select></label></div>
+    ${recipientFields()}<div data-field="suggest" class="actions"></div><label>Тема<input data-field="subject" value="${h(draft?.subject || composeContext?.subject || "")}"></label>`
+    }
+    <div class="format-tools" role="toolbar" aria-label="Форматирование"></div>
+    <form class="link-form" hidden><label>Адрес ссылки<input type="url" required placeholder="https://"></label><button>Вставить</button><button type="button">Отмена</button></form>
+    <div contenteditable="true" role="textbox" aria-multiline="true" aria-label="Текст письма" data-field="body" class="rich-body"></div>
+    <button data-field="templates">Шаблоны ответов</button><div data-field="snippets" hidden></div><div class="signature" data-field="signature"></div><div data-field="files"></div><div class="hint" data-field="preview"></div></div>`;
+  const initial = {
+    to,
+    cc: retarget ? "" : draft?.cc || "",
+    bcc: retarget ? "" : draft?.bcc || "",
+  };
+  const values = parent
+    ? () => initial
+    : recipientEditor(
+        host,
+        initial,
+        people,
+        (op, args) => api(op, args, active),
+        () => save(),
+        action,
+      );
+  const editor = richEditor(
     host,
-    { to, cc: draft?.cc || "", bcc: draft?.bcc || "" },
-    people,
-    (op, args) => api(op, args, active),
+    draft || { body: composeContext?.body || "" },
     () => save(),
-    action,
   );
   const data = () => ({
     slot,
-    account: q("sender").value,
+    account: q("sender")?.value || sender,
     ...values(),
     personal: q("mode")?.value === "personal",
     parent: parentId,
-    subject: q("subject").value,
-    body: q("body").value,
+    subject:
+      q("subject")?.value ??
+      draft?.subject ??
+      (/^re:/i.test(parent.subject) ? parent.subject : "Re: " + parent.subject),
+    ...editor.value(),
     signature,
     files: [...files],
   });
@@ -654,12 +689,13 @@ async function composer(
       let targets = await api("recipient_plan", d, active);
       let to = targets.map((r) => r.email);
       if (version !== previewVersion) return;
-      q("preview").textContent =
-        (accounts.find((a) => a.id === d.account)?.address || "") +
-        " → " +
-        to.length +
-        " · " +
-        (d.personal ? "Каждый видит только свой адрес" : visibility(targets));
+      q("preview").textContent = parent
+        ? (all ? "Ответ всем" : "Ответ") + " · " + to.join(", ")
+        : (accounts.find((a) => a.id === d.account)?.address || "") +
+          " → " +
+          to.length +
+          " · " +
+          (d.personal ? "Каждый видит только свой адрес" : visibility(targets));
       q("send").disabled = false;
     } catch {
       if (version === previewVersion)
@@ -677,30 +713,34 @@ async function composer(
     if (!q("snippets").contains(e.target)) save();
   };
   q("templates").onclick = action(() => {
-    const body = q("body"),
-      start = body.selectionStart,
-      end = body.selectionEnd;
+    const insert = editor.insertSnippet();
     return snippetMenu(
       q("snippets"),
       (op, args) => api(op, args, active),
       action,
-      (text) => {
-        body.setRangeText(text, start, end, "end");
-        body.focus();
-        save();
-      },
+      insert,
     );
   });
-  q("sender").onchange = () => {
-    signature =
-      accounts.find((a) => a.id === q("sender").value)?.signature || "";
-    q("signature").textContent = signature;
-    save();
-  };
+  if (!parent)
+    q("sender").onchange = () => {
+      signature =
+        accounts.find((a) => a.id === q("sender").value)?.signature || "";
+      q("signature").textContent = signature;
+      save();
+    };
   q("signature").textContent = signature;
   renderFiles();
   preview();
-  if (retarget || initialTo) save();
+  if (
+    retarget ||
+    (!draft && (initialTo || composeContext?.body || composeContext?.subject))
+  )
+    save();
+  host.ondropfiles = (paths) => {
+    files = [...new Set([...files, ...paths])];
+    renderFiles();
+    save();
+  };
   q("attach").onclick = action(async () => {
     files.push(...(await api("pick")));
     renderFiles();
@@ -737,6 +777,13 @@ async function composer(
       )
         return;
       const batch = await api("enqueue", d, active);
+      if (composeContext) {
+        await window.__TAURI__.event
+          .emitTo("main", "compose-sent", { batch, profile: active })
+          .catch(err);
+        await window.__TAURI__.window.getCurrentWindow().destroy();
+        return;
+      }
       undo("Отменить отправку", active, async () => {
         await cancelSend(batch, active);
       });
@@ -759,17 +806,25 @@ function visibility(targets) {
     (hidden.length ? " · Скрытая копия: " + hidden.join(", ") : "")
   );
 }
-async function compose(to = "", slot = "") {
+async function compose(to = "", slot = "", subject = "", body = "") {
   if (!pid) return;
-  modal("Новое письмо", '<div id="composeform"></div>');
-  await composer(
-    $("composeform"),
-    null,
-    false,
-    false,
+  if (!accounts.length) {
+    accountDialog(null);
+    return;
+  }
+  await window.__TAURI__.core.invoke("compose_window", {
+    profile: pid,
+    slot: slot || "new:" + crypto.randomUUID(),
     to,
-    slot || "new:" + crypto.randomUUID(),
-  );
+    subject,
+    body,
+  });
+}
+async function followLink(url) {
+  if (/^mailto:/i.test(url)) {
+    const d = mailtoDraft(url);
+    await compose(d.to, "", d.subject, d.body);
+  } else await api("open_url", { url });
 }
 async function refreshMail() {
   await refreshFolders();
@@ -940,6 +995,24 @@ async function queue() {
     let row = document.createElement("div");
     row.className = "entry";
     row.innerHTML = `<strong>${h(j.recipients)}</strong><p>${h(states[j.state])} · ${h(accounts.find((a) => a.id === j.account)?.address)}</p><small>${h(j.error)}</small>`;
+    if (j.copy_job) {
+      const info = document.createElement("p");
+      info.textContent = j.copy_folder
+        ? "Копия на сервере · " + j.copy_folder
+        : j.copy_error
+          ? "Не удалось сохранить копию на сервере · " + j.copy_error
+          : "Сохранение копии на сервере…";
+      row.append(info);
+      if (j.copy_error) {
+        const retry = document.createElement("button");
+        retry.textContent = "Повторить сохранение копии";
+        retry.onclick = action(async () => {
+          await api("retry_copy", { id: j.id });
+          await queue();
+        });
+        row.append(retry);
+      }
+    }
     if (["failed", "unknown"].includes(j.state)) {
       let b = document.createElement("button");
       b.textContent = "Повторить";
@@ -1000,7 +1073,11 @@ document.addEventListener("keydown", (e) => {
   const key = e.key.toLowerCase();
   if (key === "enter") {
     e.preventDefault();
-    const host = $("dialog").open ? $("content") : $("quick");
+    const host = composeContext
+      ? $("composeform")
+      : $("dialog").open
+        ? $("content")
+        : $("quick");
     host?.querySelector('[data-field="send"]')?.click();
   } else if (key === "f" && !$("dialog").open) {
     e.preventDefault();
@@ -1011,11 +1088,66 @@ document.addEventListener("keydown", (e) => {
     action(() => compose())(e);
   } else if (key === "r" && !$("dialog").open) {
     e.preventDefault();
-    $("quick")?.querySelector("textarea")?.focus();
+    $("quick")?.querySelector('[data-field="body"]')?.focus();
   }
 });
 document.documentElement.className = localStorage.getItem("theme") || "";
-loadProfiles(localStorage.getItem("profile")).catch(err);
+if (composeContext) {
+  document.body.classList.add("compose-window");
+  pid = composeContext.profile;
+  Promise.all([api("accounts"), api("contacts")])
+    .then(async ([boxes, contacts]) => {
+      accounts = boxes;
+      people = contacts;
+      await composer(
+        $("composeform"),
+        null,
+        false,
+        false,
+        composeContext.to,
+        composeContext.slot,
+      );
+    })
+    .catch(err);
+} else
+  loadProfiles(localStorage.getItem("profile")).then(checkChanges).catch(err);
+window.__TAURI__.webview
+  ?.getCurrentWebview()
+  .onDragDropEvent(({ payload }) => {
+    const host = composeContext ? $("composeform") : $("quick");
+    if (!host?.querySelector(".composer")) return;
+    const rect = host.getBoundingClientRect();
+    const pos = payload.position,
+      scale = window.devicePixelRatio || 1;
+    const inside =
+      !!composeContext ||
+      (pos &&
+        pos.x / scale >= rect.left &&
+        pos.x / scale <= rect.right &&
+        pos.y / scale >= rect.top &&
+        pos.y / scale <= rect.bottom);
+    host.classList.toggle(
+      "drop-target",
+      inside && ["enter", "over"].includes(payload.type),
+    );
+    if (payload.type === "drop" && inside) host.ondropfiles?.(payload.paths);
+  })
+  .catch(err);
+if (!composeContext)
+  window.__TAURI__.event
+    .listen(
+      "compose-sent",
+      action(async ({ payload }) => {
+        if (pid === payload.profile) {
+          undo("Отменить отправку", pid, () =>
+            cancelSend(payload.batch, payload.profile),
+          );
+          status("Письмо в очереди");
+          await list();
+        }
+      }),
+    )
+    .catch(err);
 function schedule() {
   return window.__TAURI__.core
     .invoke("set_schedule", {
@@ -1026,30 +1158,32 @@ function schedule() {
     })
     .catch(err);
 }
-window.__TAURI__.event
-  .listen(
-    "open-mail",
-    action(async ({ payload }) => {
-      if (pid !== payload.profile) await loadProfiles(payload.profile);
-      if (pid === payload.profile) {
-        shut();
-        await openThread(payload.thread, payload.id);
-      }
-    }),
-  )
-  .catch(err);
-window.__TAURI__.event
-  .listen(
-    "scheduled-mail",
-    action(async ({ payload }) => {
-      if (pid !== payload.profile) return;
-      await refreshFolders();
-      await list();
-      if (pid === payload.profile)
-        status(payload.error || "Синхронизация завершена");
-    }),
-  )
-  .catch(err);
+if (!composeContext)
+  window.__TAURI__.event
+    .listen(
+      "open-mail",
+      action(async ({ payload }) => {
+        if (pid !== payload.profile) await loadProfiles(payload.profile);
+        if (pid === payload.profile) {
+          shut();
+          await openThread(payload.thread, payload.id);
+        }
+      }),
+    )
+    .catch(err);
+if (!composeContext)
+  window.__TAURI__.event
+    .listen(
+      "scheduled-mail",
+      action(async ({ payload }) => {
+        if (pid !== payload.profile) return;
+        await refreshFolders();
+        await list();
+        if (pid === payload.profile)
+          status(payload.error || "Синхронизация завершена");
+      }),
+    )
+    .catch(err);
 $("sort").value = prefs.sort;
 $("sort").onchange = action(async () => {
   prefs.sort = $("sort").value;
@@ -1063,6 +1197,7 @@ click(
     click,
     api,
     schedule,
+    showChanges,
     rules: rulesPanel({ api, modal, click, action }),
     flush: () => draftWrites,
   }),
@@ -1070,7 +1205,7 @@ click(
 const appWindow = window.__TAURI__.window.getCurrentWindow();
 api("about")
   .then((info) => {
-    if (info.windows) {
+    if (info.windows && !composeContext) {
       $("titlebar").hidden = false;
       document.body.classList.add("windows");
       click("minimize", () => appWindow.minimize());
@@ -1083,6 +1218,40 @@ appWindow
   .onCloseRequested(async (event) => {
     event.preventDefault();
     await draftWrites;
+    if (composeContext)
+      await window.__TAURI__.event
+        .emitTo("main", "composer-closed", { profile: pid })
+        .catch(err);
     await window.__TAURI__.core.invoke("finish_close", {});
   })
   .catch(err);
+
+if (!composeContext)
+  window.__TAURI__.event
+    .listen(
+      "composer-closed",
+      action(async ({ payload }) => {
+        if (pid === payload.profile && quickView === "drafts") await list();
+      }),
+    )
+    .catch(err);
+function showChanges(info, previous = "") {
+  const dlg = $("changes");
+  const entries = info.changelog.split(/^## /m).slice(1);
+  const end = entries.findIndex(
+    (entry) => entry.split("\n")[0].trim() === previous,
+  );
+  $("changes-text").textContent = (end < 0 ? entries : entries.slice(0, end))
+    .join("\n")
+    .trim();
+  dlg.showModal();
+}
+async function checkChanges() {
+  const info = await api("about");
+  if (!info.version || !info.changelog) return;
+  const previous = localStorage.getItem("seen-release");
+  if (previous !== info.version && (previous || pid))
+    showChanges(info, previous || "0.4.1");
+  localStorage.setItem("seen-release", info.version);
+}
+$("changes-close").onclick = () => $("changes").close();

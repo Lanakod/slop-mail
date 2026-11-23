@@ -184,6 +184,7 @@ fn smtp_server(
 }
 fn compose(a: &store::Account, to: &str, personal: bool, parent: Option<i64>) -> delivery::Compose {
     delivery::Compose {
+        html: String::new(),
         cc: String::new(),
         bcc: String::new(),
         account: a.id.clone(),
@@ -744,5 +745,92 @@ fn idle_receives_inbox_arrival_and_falls_back_without_capability() -> Result<()>
         assert_eq!(result.is_err(), supported); // The IDLE fixture disconnects after the first arrival.
         server.join().unwrap()?;
     }
+    Ok(())
+}
+
+#[test]
+fn sent_folder_uses_special_use_and_appends_only_once() -> Result<()> {
+    let (port, server) = fixture(|mut stream| {
+        use std::io::Read;
+        let mut appended = false;
+        write!(stream.get_mut(), "* OK ready\r\n")?;
+        loop {
+            let command = line(&mut stream)?;
+            let (tag, cmd) = command.split_once(' ').context("IMAP tag")?;
+            let reply = if cmd.starts_with("LOGIN") {
+                ""
+            } else if cmd.starts_with("LIST") {
+                "* LIST (\\Sent) \"/\" \"Outgoing\"\r\n"
+            } else if cmd == "SELECT \"Outgoing\"" {
+                "* 1 EXISTS\r\n"
+            } else if cmd == "UID SEARCH HEADER Message-ID \"<invoice@example.org>\"" {
+                if appended {
+                    "* SEARCH 9\r\n"
+                } else {
+                    "* SEARCH\r\n"
+                }
+            } else if cmd.starts_with("APPEND \"Outgoing\"") {
+                assert!(!appended && cmd.contains("\\Seen"));
+                write!(stream.get_mut(), "+ proceed\r\n")?;
+                let mut raw = vec![0; LETTER.len()];
+                stream.read_exact(&mut raw)?;
+                assert_eq!(raw, LETTER.as_bytes());
+                assert!(line(&mut stream)?.is_empty());
+                appended = true;
+                ""
+            } else if cmd == "LOGOUT" {
+                write!(stream.get_mut(), "* BYE closing\r\n{tag} OK done\r\n")?;
+                break;
+            } else {
+                anyhow::bail!("Unexpected {cmd}")
+            };
+            write!(stream.get_mut(), "{reply}{tag} OK done\r\n")?;
+        }
+        Ok(appended)
+    })?;
+    let mut client = imap::Client::new(TcpStream::connect(("127.0.0.1", port))?);
+    client.read_greeting()?;
+    let mut session = client.login("test", "fixture").map_err(|e| e.0)?;
+    for _ in 0..2 {
+        assert_eq!(
+            network::append_sent(&mut session, LETTER.as_bytes())?,
+            "Outgoing"
+        );
+    }
+    session.logout()?;
+    assert!(server.join().unwrap()?);
+    Ok(())
+}
+
+#[test]
+fn rich_message_preserves_both_bodies_and_attachment() -> Result<()> {
+    let mut c = database()?;
+    let a = account(&mut c)?;
+    let dir = tempfile::tempdir()?;
+    let file = dir.path().join("note.txt");
+    std::fs::write(&file, "attachment")?;
+    let mut draft = compose(&a, "reader@example.org", false, None);
+    draft.html =
+        "<ol><li><b>Ответ</b> <i>да</i> <a href=\"https://example.org\">ссылка</a></li></ol>"
+            .into();
+    draft.files.push(file);
+    delivery::enqueue(&mut c, draft)?;
+    let raw: Vec<u8> = c.query_row("SELECT raw FROM queue", [], |r| r.get(0))?;
+    let mail = mailparse::parse_mail(&raw)?;
+    assert_eq!(mail.ctype.mimetype, "multipart/mixed");
+    assert_eq!(mail.subparts[0].ctype.mimetype, "multipart/alternative");
+    let bodies = &mail.subparts[0].subparts;
+    assert!(bodies[0].get_body()?.contains("Ответ"));
+    let html = bodies[1].get_body()?;
+    for fragment in [
+        "<ol>",
+        "<b>Ответ</b>",
+        "<i>да</i>",
+        "https://example.org",
+        "Работа",
+    ] {
+        assert!(html.contains(fragment));
+    }
+    assert_eq!(mail.subparts[1].get_body_raw()?, b"attachment");
     Ok(())
 }
