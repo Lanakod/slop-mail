@@ -24,6 +24,7 @@
         ><button id="contacts">☷ Контакты</button
         ><button id="queue">⇧ Очередь</button>
       </div>
+      <button id="update-alert" hidden></button>
       <button id="settings" title="Настройки" aria-label="Настройки">⚙</button
       ><button id="theme" title="Сменить тему" aria-label="Сменить тему">
         ◐
@@ -81,7 +82,11 @@
       </div>
       <div id="content"></div>
     </dialog>
-    <dialog id="changes"><h2>Что нового в Slop Mail</h2><pre id="changes-text"></pre><button id="changes-close">Закрыть</button></dialog>
+    <dialog id="changes" aria-labelledby="changes-title">
+      <div class="changes-heading"><img src="../icons/icon.png" width="42" height="42" alt=""><h2 id="changes-title">Что нового в Slop Mail</h2></div>
+      <div id="changes-text"></div>
+      <div class="changes-footer"><button class="accent" id="changes-close">Закрыть</button></div>
+    </dialog>
     <datalist id="addresses"></datalist>
     <script type="module" src="app.js"></script>
   </body>

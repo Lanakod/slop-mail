@@ -752,4 +752,14 @@ body.compose-window > header, body.compose-window > main, body.compose-window > 
 .format-tools button:first-child { font-weight:bold; }
 .format-tools button:nth-child(2) {font-style:italic;}
 .drop-target {outline:3px dashed var(--active);outline-offset:-3px;}
-#changes-text {white-space:pre-wrap;font:inherit;}
+#changes[open] { display: flex; flex-direction: column; }
+.changes-heading, .changes-footer { padding: 16px 24px; background: var(--rail); display: flex; align-items: center; gap: 14px; }
+.changes-heading { border-bottom: 1px solid var(--line); }
+.changes-heading h2 { margin: 0; font: bold 22px Georgia, serif; }
+#changes-text { padding: 20px 24px; overflow-y: auto; }
+#changes-text section + section { border-top: 1px solid var(--line); margin-top: 18px; padding-top: 18px; }
+#changes-text h3 { margin: 0 0 10px; font-size: 16px; }
+#changes-text ul { margin: 0; padding-inline-start: 22px; line-height: 1.55; }
+#changes-text li + li { margin-top: 7px; }
+.changes-footer { justify-content: flex-end; border-top: 1px solid var(--line); }
+#update-alert { border-color: var(--active); }

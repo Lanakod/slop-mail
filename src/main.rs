@@ -37,6 +37,7 @@ fn main() {
             desktop::compose_window,
             desktop::update,
             desktop::tray_counts,
+            desktop::notify_update,
             desktop::notify_mail
         ])
         .build(tauri::generate_context!())

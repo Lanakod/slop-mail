@@ -3,6 +3,7 @@ import { escapeHtml as h, options } from "./helpers.js";
 export const prefs = {
   startup: true,
   minutes: 5,
+  updateHours: 24,
   instant: true,
   notify: true,
   sort: "newest",
@@ -67,7 +68,16 @@ export function applyConfig(config, address) {
   get("inlogin").value = expand(config.login);
   get("outlogin").value = expand(config.smtp_login);
 }
-export function settingsMenu({ modal, click, api, schedule, flush, rules, showChanges }) {
+export function settingsMenu({
+  modal,
+  click,
+  api,
+  schedule,
+  flush,
+  rules,
+  showChanges,
+  updates,
+}) {
   async function settings() {
     const about = await api("about");
     modal(
@@ -91,7 +101,18 @@ export function settingsMenu({ modal, click, api, schedule, flush, rules, showCh
         prefs.presets.map((x) => [x.id, x.name]),
         null,
       )}</select><div class="actions"><button id="newpreset">Создать</button><button id="editpreset" ${prefs.presets.length ? "" : "disabled"}>Изменить</button><button id="delpreset" ${prefs.presets.length ? "" : "disabled"}>Удалить</button></div></fieldset>
-      <button id="changes-show">История изменений</button><button id="mail-rules">Правила для входящих</button><button id="updates">Проверить обновления на GitHub</button><div id="updateinfo" role="status"></div>`,
+      <button id="changes-show">История изменений</button><button id="mail-rules">Правила для входящих</button><fieldset><legend>Обновления Slop Mail</legend>
+      <label>Проверять новые версии<select id="update-hours">${options(
+        [
+          [0, "Только вручную"],
+          [1, "Каждый час"],
+          [6, "Каждые 6 часов"],
+          [24, "Раз в сутки"],
+          [168, "Раз в неделю"],
+        ],
+        prefs.updateHours,
+      )}</select></label>
+      <button id="updates">Проверить сейчас</button><div id="updateinfo" role="status"></div></fieldset>`,
     );
     get("startup").onchange = () => {
       prefs.startup = get("startup").checked;
@@ -113,7 +134,7 @@ export function settingsMenu({ modal, click, api, schedule, flush, rules, showCh
       persist();
       schedule();
     };
-    click("changes-show",()=>showChanges(about));
+    click("changes-show", () => showChanges(about));
     click("mail-rules", rules);
     click("newpreset", () => edit(null));
     click("editpreset", () =>
@@ -127,15 +148,19 @@ export function settingsMenu({ modal, click, api, schedule, flush, rules, showCh
         await settings();
       }
     });
+    get("update-hours").onchange = () => {
+      prefs.updateHours = Number(get("update-hours").value);
+      persist();
+      updates.schedule();
+    };
     click("updates", async () => {
       const label = get("updateinfo"),
         button = get("updates");
       button.disabled = true;
       label.textContent = "Проверка GitHub Releases…";
       try {
-        const version = await window.__TAURI__.core.invoke("update", {
-          installVersion: null,
-        });
+        const version = await updates.check();
+        updates.schedule();
         if (!label.isConnected) return;
         if (!version) {
           label.textContent = "Установлена актуальная версия";

@@ -31,6 +31,16 @@ pub async fn update(
     Ok(Some(release.version))
 }
 #[tauri::command]
+pub fn notify_update(app: AppHandle, version: String) -> Result<(), String> {
+    use tauri_plugin_notification::NotificationExt;
+    app.notification()
+        .builder()
+        .title(format!("Доступен Slop Mail {version}"))
+        .body("Откройте настройки клиента для установки обновления.")
+        .show()
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
 pub fn notify_mail(
     app: AppHandle,
     profile: String,

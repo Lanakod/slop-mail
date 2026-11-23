@@ -22,10 +22,15 @@ test("settings persist a schedule and reusable connection template without crede
     },
     api: async () => ({ version: "0.2.0" }),
     schedule: () => rescheduled++,
+    updates: { schedule: () => {} },
     flush: async () => {},
   });
   await menu();
   const el = (id) => doc.getElementById(id);
+  assert.equal(el("update-hours").value, "24");
+  el("update-hours").value = "0";
+  el("update-hours").onchange();
+  assert.equal(JSON.parse(localStorage.getItem("mail-preferences")).updateHours, 0);
   el("minutes").value = "15";
   el("minutes").onchange();
   assert.equal(rescheduled, 1);

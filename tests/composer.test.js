@@ -115,10 +115,16 @@ test("composer preserves typed text, recipient visibility and sender signature a
   assert.equal(draft.subject, "");
   assert.equal(draft.account, "home");
   assert.equal(draft.personal, true);
+  assert.equal(q("send").disabled, false);
+  q("body").textContent = " \n\u200b";
+  q("body").dispatchEvent(new w.Event("input", { bubbles: true }));
+  await tick();
+  assert.equal(q("send").disabled, true);
   drop({
     payload: { type: "drop", paths: ["/tmp/test.txt", "/tmp/test.txt"] },
   });
   await tick();
+  assert.equal(q("send").disabled, false);
   assert.deepEqual(draft.files, ["/tmp/test.txt"]);
   q("body").textContent = "Saved before hiding";
   q("body").dispatchEvent(new w.Event("input", { bubbles: true }));

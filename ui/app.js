@@ -1,3 +1,4 @@
+import { updateChecks } from "./updates.js";
 import { richEditor } from "./rich-editor.js";
 import { chatBody, mailtoDraft } from "./mail-links.js";
 import { rulesPanel } from "./organize.js";
@@ -680,6 +681,8 @@ async function composer(
       q("files").append(b);
     });
   };
+  const hasContent = (draft) =>
+    draft.files.length > 0 || draft.body.replace(/[\s\u200b]/gu, "").length > 0;
   let previewVersion = 0;
   const preview = async () => {
     let version = ++previewVersion;
@@ -696,7 +699,7 @@ async function composer(
           to.length +
           " · " +
           (d.personal ? "Каждый видит только свой адрес" : visibility(targets));
-      q("send").disabled = false;
+      q("send").disabled = !to.length || !hasContent(d);
     } catch {
       if (version === previewVersion)
         q("preview").textContent = "Укажите адреса получателей через запятую";
@@ -753,6 +756,7 @@ async function composer(
     try {
       await draftWrites;
       const d = data();
+      if (!hasContent(d)) return;
       if (
         !d.files.length &&
         /во вложении|прикладываю|прикрепляю|attached|see attachment/i.test(
@@ -1190,6 +1194,24 @@ $("sort").onchange = action(async () => {
   persist();
   await list();
 });
+const updates = updateChecks({
+  hours: () => prefs.updateHours,
+  storage: localStorage,
+  fetchVersion: () =>
+    window.__TAURI__.core.invoke("update", { installVersion: null }),
+  announce: async (version) => {
+    const button = $("update-alert");
+    button.hidden = !version;
+    if (!version) return;
+    button.textContent = "Доступно обновление · " + version;
+    if (localStorage.getItem("update-notified") !== version) {
+      await window.__TAURI__.core.invoke("notify_update", { version });
+      localStorage.setItem("update-notified", version);
+    }
+  },
+});
+if (!composeContext) updates.schedule();
+click("update-alert", () => $("settings").click());
 click(
   "settings",
   settingsMenu({
@@ -1198,6 +1220,7 @@ click(
     api,
     schedule,
     showChanges,
+    updates,
     rules: rulesPanel({ api, modal, click, action }),
     flush: () => draftWrites,
   }),
@@ -1241,9 +1264,21 @@ function showChanges(info, previous = "") {
   const end = entries.findIndex(
     (entry) => entry.split("\n")[0].trim() === previous,
   );
-  $("changes-text").textContent = (end < 0 ? entries : entries.slice(0, end))
-    .join("\n")
-    .trim();
+  const sections = (end < 0 ? entries : entries.slice(0, end)).map((entry) => {
+    const [version, ...lines] = entry.trim().split("\n");
+    const section = document.createElement("section");
+    const heading = document.createElement("h3");
+    heading.textContent = "Версия " + version;
+    const list = document.createElement("ul");
+    for (const line of lines.filter((line) => line.startsWith("- "))) {
+      const item = document.createElement("li");
+      item.textContent = line.slice(2);
+      list.append(item);
+    }
+    section.append(heading, list);
+    return section;
+  });
+  $("changes-text").replaceChildren(...sections);
   dlg.showModal();
 }
 async function checkChanges() {
