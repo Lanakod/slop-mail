@@ -1,0 +1,16 @@
+name: Feature request / Предложение
+description: Suggest an improvement to a mail workflow / Предложить улучшение
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: workflow
+    attributes:
+      label: What are you trying to do? / Какую задачу вы решаете?
+    validations:
+      required: true
+  - type: textarea
+    id: change
+    attributes:
+      label: Proposed behavior / Как это должно работать?
+    validations:
+      required: true

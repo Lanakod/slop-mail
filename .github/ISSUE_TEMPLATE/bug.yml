@@ -1,0 +1,36 @@
+name: Bug report / Ошибка
+description: Report unexpected behavior in Slop Mail / Сообщить о проблеме
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Slop Mail version / Версия
+      placeholder: "0.5.1"
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system and version / ОС и версия
+      placeholder: "Windows 11, macOS 15…"
+    validations:
+      required: true
+  - type: dropdown
+    id: protocol
+    attributes:
+      label: Account protocol / Протокол
+      options: [IMAP, POP3, "Unknown or unrelated / Неизвестно или не относится"]
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce / Как повторить
+      description: Use test data. Remove passwords and private email content from screenshots and logs.
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Expected and actual behavior / Ожидаемый и фактический результат
+    validations:
+      required: true

@@ -1,0 +1,12 @@
+{
+  "description": "Local-first desktop email client for macOS and Windows. Built with Rust, Tauri and SQLite.",
+  "topics": ["email-client", "desktop-app", "imap", "pop3", "smtp", "rust", "tauri", "sqlite", "macos", "windows"],
+  "labels": [
+    {"name": "area: sync", "color": "386C67", "description": "IMAP, POP3 and incoming mail synchronization"},
+    {"name": "area: compose", "color": "A55039", "description": "Composer, drafts, attachments and outgoing mail"},
+    {"name": "area: storage", "color": "77608B", "description": "Local profiles, SQLite, search and storage"},
+    {"name": "area: updates", "color": "48668A", "description": "Release packaging, installation and updates"},
+    {"name": "platform: macOS", "color": "D7E4CF", "description": "Specific to the macOS desktop client"},
+    {"name": "platform: Windows", "color": "C8DDEA", "description": "Specific to the Windows desktop client"}
+  ]
+}

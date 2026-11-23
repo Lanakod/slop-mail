@@ -1,104 +1,72 @@
-<p align="center"><img src="icons/icon.png" width="100" height="100" alt="Кремовый конверт с киноварным клапаном на тёмно-зелёном фоне"></p>
-
+<p align="center"><img src="icons/icon.png" width="100" height="100" alt="Slop Mail envelope"></p>
 <h1 align="center">Slop Mail</h1>
-<p align="center"><samp>АВИАПОЧТА · ВЕРСИЯ 0.5.1 · macOS / Windows</samp></p>
-<p align="center"><a href="https://github.com/Lanakod/slop-mail/releases/latest"><b>Скачать клиент</b></a>　·　<a href="#первое-письмо">Подключить ящик</a>　·　<a href="#мастерская">Собрать из исходников</a></p>
+<p align="center"><samp>AIR MAIL · macOS / Windows</samp></p>
+<p align="center">English · <a href="README.ru.md">Русский</a></p>
+<p align="center"><a href="https://github.com/Lanakod/slop-mail/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Lanakod/slop-mail"></a> <a href="https://github.com/Lanakod/slop-mail/actions/workflows/desktop.yml"><img alt="Desktop builds" src="https://img.shields.io/github/actions/workflow/status/Lanakod/slop-mail/desktop.yml?branch=master"></a> <a href="https://github.com/Lanakod/slop-mail/blob/master/LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-456e55"></a></p>
 
-Slop Mail хранит почту на вашем компьютере и показывает переписку как разговор. Слева — ящики и папки, посередине — ветки писем, справа — открытая переписка и поле быстрого ответа. После синхронизации можно отключиться от сети, найти письмо по тексту, открыть вложение и подготовить ответ.
+Slop Mail is a local-first desktop mail client that presents email threads as conversations. Keep a thread open for quick replies, or pop out a separate window to compose a new message. Once your mailbox has synced, you can search messages, open downloaded attachments and write drafts offline.
 
-## Первое письмо
+Lanakod develops Slop Mail together with OpenAI Codex, from shaping features to writing code and testing releases. The name **Slop Mail** is a wink at that collaboration.
 
-1. Скачайте **DMG для macOS Apple Silicon** или **установщик EXE для Windows x64**. На Mac перенесите Slop Mail в «Программы». [Скачать из GitHub Releases](https://github.com/Lanakod/slop-mail/releases/latest)
-2. Создайте профиль, нажмите **＋** рядом с почтовыми ящиками и введите адрес. **Найти настройки по email** запрашивает конфигурацию у провайдера и в каталоге Thunderbird. Можно выбрать сохранённый шаблон или указать серверы вручную.
-3. Проверьте входящее и исходящее соединения, сохраните ящик и нажмите **Получить**. При первом получении клиент заполняет локальный архив. Расписание и уведомления находятся в **⚙ Настройки**.
-4. Раскройте ветку стрелкой. Непрочитанные письма выделены жирным. Откройте нужное сообщение и нажмите **Ответить**. Цитата сворачивается отдельно, ссылка открывается в браузере.
+## First delivery
 
-## На почтовом столе
+1. Download the DMG for Apple Silicon Macs or the installer for 64-bit Windows. On macOS, drag Slop Mail into Applications. [GitHub Releases](https://github.com/Lanakod/slop-mail/releases/latest)
+2. Create a profile, click **＋** beside the mailboxes and enter your email address. Discover settings from your provider or the Thunderbird configuration directory, choose a saved preset, or enter the servers manually.
+3. Test the incoming and outgoing connections, save the account and fetch your mail. The first sync populates your local archive. Configure the polling interval and notifications in Settings.
+4. Expand a thread to see its messages. Unread messages appear in bold. Click a message to reply inline. Quoted text collapses separately. Web links open in your browser and mail links open a draft.
 
-| Задача | Как это сделать |
+## At the mail desk
+
+| Task | How it works |
 | --- | --- |
-| Разобрать пачку писем | Ctrl/Cmd + щелчок выбирает отдельные строки, Shift + щелчок — диапазон. Нажмите правой кнопкой на выделение и выберите действие. Выбор заголовка ветки охватывает её письма в текущем списке. |
-| Освободить входящие | В контекстном меню выберите архив, корзину или папку. Перемещение можно отменить в течение 10 секунд. Для серверного перемещения IMAP нужен UID MOVE. Для POP3 папки локальные. |
-| Вернуться к разговору завтра | Выберите **Отложить до…** и укажите дату и время. Разговор доступен в разделе **Отложенные**. Новый входящий ответ возвращает его раньше срока. |
-| Успеть исправить отправленное | Сразу после подтверждения нажмите **Отменить отправку**. Клиент выдерживает 10 секунд до передачи по SMTP и при отмене возвращает текст, адресатов и список вложений в редактор. Если в тексте упомянут файл, клиент предложит приложить его. |
-| Найти документ | Введите `от:Иванов файл:pdf`. Откройте фильтры рядом с поиском и нажмите **Сохранить запрос**, чтобы закрепить его слева. Метки правил доступны через `метка:Проект`. |
-| Разложить входящие автоматически | В настройках откройте **Правила для входящих**. Укажите адрес или домен отправителя, затем метку, папку назначения или **Без уведомлений**. Правила действуют на новые поступления. |
-| Прочитать письмо по уведомлению | Нажмите на уведомление работающего клиента, чтобы открыть профиль и письмо. Счётчики у ящиков и папок показывают непрочитанное. На Windows сводка также доступна при наведении на значок в трее. |
+| Triage a busy inbox | Select multiple rows with Ctrl/Cmd-click or a range with Shift-click. Right-click to mark them read, move them, archive them or send them to Trash. IMAP server moves require UID MOVE. POP3 folders are local. |
+| Come back to a conversation | Snooze it until a date and time. An incoming reply brings it back early. |
+| Find a message | Search offline, combine filters and save a query for later. For example, use `файл:pdf` to look for PDF attachments. Incoming rules can label messages, move them or silence notifications. |
+| Write and send | Use bold, italic, lists and links. Drop files onto either editor. A ten-second undo window lets you return a queued message to the editor. |
+| Track delivery | The queue shows each recipient’s delivery status. For IMAP accounts it also shows whether the sent copy reached the server folder. Retry saving a copy independently after a failure. POP3 accounts keep a local copy. |
+| Manage contacts | Search by name or address, view a contact’s conversations across the profile, create groups and import or export vCard and CSV. Personal mailings create one message per recipient. |
+| Keep up with arrivals | IMAP IDLE listens for incoming mail when supported. POP3 and disconnected IMAP sessions use the selected polling interval. Manual mode disables both automatic checks. |
 
-**Ссылки в старых письмах.** В предыдущих версиях при импорте HTML мог сохраниться только текст ссылки. Для такого входящего письма нажмите **Обновить ссылки с сервера**. Для восстановления нужен оригинал в почтовом ящике.
+Closing the main window keeps Slop Mail running. On Windows, reopen it from the tray or your shortcut. On macOS, use the Dock. To quit, use the Windows tray menu or ⌘Q.
 
-**Фоновый режим.** Крестик сохраняет черновик и скрывает окно. В Windows вернуться можно через ярлык или значок рядом с часами, выйти — через меню значка. В macOS нажмите иконку в Dock для возврата или ⌘Q для выхода.
-
-## Адресная книга и отправка
-
-Найдите человека по имени или любому из его адресов. В карточке собраны переписка из ящиков профиля, основной адрес и дополнительные контакты. Двойной щелчок начинает письмо. Контакты можно объединять в группы, импортировать и экспортировать через vCard и CSV.
-
-**Написать** открывает отдельное окно. Быстрый ответ остаётся в переписке. В обоих редакторах можно выделить текст жирным или курсивом, вставить список или ссылку и перетащить файлы в письмо. Кнопки отправки и вложений расположены сверху.
-
-Для ящиков IMAP клиент сохраняет отправленное письмо в серверную папку. В очереди можно проверить результат и повторить сохранение после ошибки. Для POP3 копия сохраняется локально.
-
-В отдельном окне доступны копия, скрытая копия, подпись выбранного ящика и шаблоны ответов. Персональная рассылка создаёт отдельное письмо на каждого получателя. Очередь показывает результат по каждому адресу. При обрыве после передачи данных SMTP результат может быть неизвестен. Перед повтором проверьте отправку, чтобы избежать дубликата.
-
-| Клавиши | Действие |
+| Shortcut | Action |
 | --- | --- |
-| Ctrl/⌘ + N | Новое письмо |
-| Ctrl/⌘ + F | Поиск |
-| Ctrl/⌘ + R | Быстрый ответ |
-| Ctrl/⌘ + Enter | Подтверждение отправки |
+| Ctrl/⌘ + N | Compose a message |
+| Ctrl/⌘ + F | Search |
+| Ctrl/⌘ + R | Focus the quick reply |
+| Ctrl/⌘ + Enter | Confirm sending |
 
-При включённой автоматической проверке клиент слушает папку INBOX через IMAP IDLE, если сервер поддерживает эту команду. Новое письмо запускает получение сразу, в том числе при скрытом окне. Проверка входящего IMAP-соединения в настройках ящика показывает доступность IDLE после входа. Настройка **Получать сразу при поддержке IMAP IDLE** включена по умолчанию. Для POP3 и при разрыве соединения действует выбранный интервал. Режим **Только вручную** отключает оба способа автоматической проверки.
+## Your mail archive
 
-## Почтовый архив
+Each profile has its own `mail.sqlite` database for messages, attachments, contacts, drafts, the delivery queue and full-text search. Saved passwords use macOS Keychain or Windows Credential Manager. You can also keep credentials in memory for the current session.
 
-Локальный профиль содержит базу SQLite с письмами, вложениями, полнотекстовым индексом, контактами, настройками и очередью. Пароли можно сохранить в **macOS Keychain** или **Windows Credential Manager**. При отключённом запоминании они доступны до выхода из клиента.
-
-| Система | Стандартный каталог |
+| System | Default data directory |
 | --- | --- |
 | macOS | `~/Library/Application Support/org.SlopMail.Slop-Mail/` |
 | Windows | `%APPDATA%\SlopMail\Slop Mail\data\` |
 
-Для переноса полностью выйдите из приложения и скопируйте папку профиля целиком. На другом компьютере выберите **Открыть существующий профиль…** и введите пароли для подключения. Стандартные профили лежат в `Profiles/<UUID>/`. При создании можно выбрать собственный каталог.
+Profiles live under `Profiles/<UUID>/` or in a directory of your choice. To move a profile, quit the client, copy the entire profile directory, choose **Open existing profile** on the destination computer and enter your account passwords.
 
-<details>
-<summary><b>Протоколы и содержимое писем</b></summary>
+Incoming and outgoing connections support TLS and required STARTTLS (STLS for POP3). POP3 tracks UIDL and issues DELE only after saving a message locally when you choose to remove server copies. HTML mail opens in an isolated frame. Loading external images requires a separate action.
 
-IMAP учитывает UID и UIDVALIDITY папки. POP3 запоминает UIDL. Если отключено сохранение копии на сервере, клиент отправляет DELE после записи письма в SQLite. Команда **Удалить локально** удаляет копию из профиля. Для серверного перемещения в корзину используйте меню списка.
+## Workshop
 
-Входящие и исходящие подключения поддерживают TLS и обязательный STARTTLS (STLS для POP3). Сертификат проверяется системным TLS. Поддерживаются обычный пароль и пароль приложения. HTML открывается в изолированном фрейме. Внешние изображения загружаются по отдельной команде.
-
-</details>
-
-## Мастерская
-
-Rust, Tauri 2, SQLite FTS5 и интерфейс на JavaScript. Для разработки используются Rust 1.95 и Node.js 22.20. На macOS нужны Xcode Command Line Tools. На Windows — Rust MSVC, Windows SDK, WebView2 и компонент **Desktop development with C++** в Visual Studio Build Tools.
+The client uses Rust, Tauri 2, SQLite FTS5 and JavaScript. Development uses Rust 1.95 and Node.js 22.20. On macOS, install Xcode Command Line Tools. On Windows, use the MSVC Rust toolchain, Windows SDK, WebView2 and the Visual Studio Build Tools workload **Desktop development with C++**.
 
 ```sh
 npm ci
 npm run dev
 ```
 
-<details>
-<summary><b>Проверки, сборка и публикация</b></summary>
-
-```sh
-npm run lint
-npm run typecheck
-npm test
-npm run build:ui
-cargo fmt --check
-cargo clippy --all-targets --locked -- -D warnings
-cargo test --locked
-```
-
-Почтовые тесты используют временные профили и локальные IMAP/POP3/SMTP-серверы. Дополнительные проверки открытия системного приложения и отправки через настоящую учётную запись запускаются явно.
-
-| Цель | Команда |
+| Package | Build command |
 | --- | --- |
-| Образ macOS arm64 | `sh scripts/package-macos.sh` |
-| Установщик Windows x64 | `npm run build -- --ci --bundles nsis` |
+| macOS arm64 disk image | `sh scripts/package-macos.sh` |
+| Windows x64 installer | `npm run build -- --ci --bundles nsis` |
 
-При изменении поведения клиента добавьте запись в раздел следующей версии в [CHANGELOG.md](CHANGELOG.md). После обновления клиент показывает новые записи при запуске. Полная история доступна в настройках. В разделе «Обновления Slop Mail» можно проверить версию сразу или включить проверку каждый час, каждые 6 часов, раз в сутки или раз в неделю. По умолчанию клиент проверяет обновления раз в сутки, пока запущен. Установка требует подтверждения.
+Version tags such as `v0.5.1` trigger CI builds and signed updater packages. The app verifies the update signature before installation. Local Mac builds are not notarized. You can check for updates manually in Settings or choose an interval while the client is running. The default is once a day. Installation asks for confirmation. [Release workflow](.github/workflows/desktop.yml) · [Changelog (Russian)](CHANGELOG.md)
 
-Версии в Cargo, npm и Tauri должны совпадать с тегом. При отправке тега вида `v0.4.0` GitHub Actions собирает обе платформы, подписывает пакеты обновления и публикует релиз с `latest.json`. Для подписи нужны секреты `TAURI_SIGNING_PRIVATE_KEY` и, для зашифрованного ключа, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Клиент проверяет подпись перед установкой обновления. Локальный DMG собирается без Developer ID и нотариализации Apple. [Workflow сборки](.github/workflows/desktop.yml)
+## Contributing
 
-</details>
+Use the bug report or feature request form to open an issue. The contribution guide has the local checks and conventions for pull requests. [Issue forms](https://github.com/Lanakod/slop-mail/issues/new/choose) · [Contributing](CONTRIBUTING.md)
+
+Copyright © 2026 Lanakod. Distributed under the [MIT License](LICENSE).
