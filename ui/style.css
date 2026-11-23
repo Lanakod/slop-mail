@@ -780,3 +780,6 @@ body.compose-window > header, body.compose-window > main, body.compose-window > 
 .disk-messages span { overflow-wrap: anywhere; }
 .mailbox-state {display:block; padding:0 8px 5px; color:var(--muted); overflow-wrap:anywhere;}
 .accountname svg {vertical-align:middle;}
+.html-notice {display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:10px 0; padding:9px 12px; border-inline-start:3px solid #bc913f; background:var(--rail);}
+.bubble:has(.html-notice) {width:min(100%, 64rem);max-width:100%;box-sizing:border-box;}
+.bubble .plain-body iframe {display:block;height:clamp(240px,48vh,620px);}

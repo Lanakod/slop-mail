@@ -1,7 +1,7 @@
 <p align="center"><img src="icons/icon.png" width="100" height="100" alt="Кремовый конверт с киноварным клапаном на тёмно-зелёном фоне"></p>
 
 <h1 align="center">Slop Mail</h1>
-<p align="center"><samp>АВИАПОЧТА · ВЕРСИЯ 0.6.0 · macOS / Windows</samp></p>
+<p align="center"><samp>АВИАПОЧТА · ВЕРСИЯ 0.6.1 · macOS / Windows</samp></p>
 <p align="center"><a href="README.md">English</a> · Русский</p>
 <p align="center"><a href="https://github.com/Lanakod/slop-mail/releases/latest"><img alt="Последний релиз" src="https://img.shields.io/github/v/release/Lanakod/slop-mail"></a> <a href="https://github.com/Lanakod/slop-mail/actions/workflows/desktop.yml"><img alt="Сборки клиента" src="https://img.shields.io/github/actions/workflow/status/Lanakod/slop-mail/desktop.yml?branch=master"></a> <a href="https://github.com/Lanakod/slop-mail/blob/master/LICENSE"><img alt="Лицензия MIT" src="https://img.shields.io/badge/license-MIT-456e55"></a></p>
 <p align="center"><a href="https://github.com/Lanakod/slop-mail/releases/latest"><b>Скачать клиент</b></a>　·　<a href="#первое-письмо">Подключить ящик</a>　·　<a href="#мастерская">Собрать из исходников</a></p>
@@ -35,7 +35,7 @@ Lanakod разрабатывает Slop Mail вместе с OpenAI Codex. Вм�
 | Разложить входящие автоматически | В настройках откройте **Правила для входящих**. Укажите адрес или домен отправителя, затем метку, папку назначения или **Без уведомлений**. Правила действуют на новые поступления. |
 | Прочитать письмо по уведомлению | Нажмите на уведомление работающего клиента, чтобы открыть профиль и письмо. Счётчики у ящиков и папок показывают непрочитанное. На Windows сводка также доступна при наведении на значок в трее. |
 
-**Ссылки в старых письмах.** В предыдущих версиях при импорте HTML мог сохраниться только текст ссылки. Для такого входящего письма нажмите **Обновить ссылки с сервера**. Для восстановления нужен оригинал в почтовом ящике.
+**Ссылки в старых письмах.** В предыдущих версиях при импорте HTML мог сохраниться только текст ссылки. Для такого входящего письма нажмите **Обновить HTML с сервера**. Для восстановления нужен оригинал в почтовом ящике.
 
 **Фоновый режим.** Крестик сохраняет черновик и скрывает окно. В Windows вернуться можно через ярлык или значок рядом с часами, выйти — через меню значка. В macOS нажмите иконку в Dock для возврата или ⌘Q для выхода.
 

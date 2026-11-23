@@ -1,3 +1,4 @@
+import { htmlNotice } from "./html-notice.js";
 import { accountIcon, iconOptions } from "./account-icons.js";
 import { diskReport } from "./disk-usage.js";
 import { updateChecks } from "./updates.js";
@@ -429,7 +430,7 @@ async function openThread(key, hit) {
   function bubble(m) {
     const files = m.files;
     if (token !== readerVersion) return;
-    const body = chatBody(m);
+    const body = m.html ? "" : chatBody(m);
     let art = document.createElement("article");
     art.className =
       "bubble" +
@@ -488,15 +489,13 @@ async function openThread(key, hit) {
       },
     );
     if (m.html) {
-      if (!m.html.includes("href=") && !m.outgoing)
-        btn(actions, "Обновить ссылки с сервера", async () => {
+      const host = art.querySelector(".plain-body");
+      htmlNotice(host, (remote) => htmlView(art, m, files, remote), action);
+      if (!m.outgoing)
+        btn(actions, "Обновить HTML с сервера", async () => {
           await api("restore_links", { id: m.id });
           await openThread(key, m.id);
         });
-      btn(actions, "HTML", () => htmlView(art, m, files, false));
-      btn(actions, "Загрузить внешние изображения", () =>
-        htmlView(art, m, files, true),
-      );
     }
     for (const f of files) {
       let el = document.createElement("div");
@@ -611,13 +610,17 @@ async function openThread(key, hit) {
 async function htmlView(art, m, files, remote) {
   const template = document.createElement("template");
   template.innerHTML = m.html;
+  let hasRemoteImages = false;
   for (const img of template.content.querySelectorAll("img")) {
     const src = img.getAttribute("src") || "";
     img.removeAttribute("src");
     if (src.startsWith("cid:")) {
       const f = files.find((f) => f.cid === src.slice(4));
       if (f) img.src = await api("inline", { id: f.id });
-    } else if (remote && /^https:\/\//i.test(src)) img.src = src;
+    } else if (/^https:\/\//i.test(src)) {
+      hasRemoteImages = true;
+      if (remote) img.src = src;
+    }
   }
   art.querySelector(".html-links")?.remove();
   const links = document.createElement("div");
@@ -641,10 +644,11 @@ async function htmlView(art, m, files, remote) {
   frame.title = "Содержимое письма";
   frame.referrerPolicy = "no-referrer";
   frame.srcdoc =
-    `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: ${remote ? "https:" : ""}; style-src 'unsafe-inline'"><meta name="referrer" content="no-referrer"><style>body{font:15px system-ui;overflow-wrap:anywhere}img{max-width:100%}</style>` +
+    `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: ${remote ? "https:" : ""}; style-src 'unsafe-inline'"><meta name="referrer" content="no-referrer"><style>html{color-scheme:light}body{margin:12px;color:#202623;background:white;font:15px/1.45 system-ui;overflow-wrap:anywhere}table{max-width:100%}img{max-width:100%;height:auto}</style>` +
     template.innerHTML;
-  art.querySelector(".plain-body").hidden = true;
-  art.append(frame, links);
+  const host = art.querySelector(".plain-body");
+  host.replaceChildren(frame, links);
+  return hasRemoteImages;
 }
 function accountDialog(edit) {
   const a = edit || {

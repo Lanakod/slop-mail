@@ -172,6 +172,32 @@ pub fn save(
 fn clean_html(html: &str) -> String {
     ammonia::Builder::default()
         .add_url_schemes(&["cid"])
+        .add_generic_attributes(&["style", "align"])
+        .filter_style_properties(
+            [
+                "color",
+                "background-color",
+                "font-family",
+                "font-size",
+                "font-weight",
+                "font-style",
+                "line-height",
+                "text-align",
+                "text-decoration",
+                "vertical-align",
+                "width",
+                "max-width",
+                "padding",
+                "padding-left",
+                "padding-right",
+                "padding-top",
+                "padding-bottom",
+                "margin",
+                "border-radius",
+                "border-collapse",
+            ]
+            .into(),
+        )
         .clean(html)
         .to_string()
 }
@@ -183,4 +209,20 @@ pub fn original_html(raw: &[u8], mid: &str) -> Result<String> {
     let mut p = Parts::default();
     parts(&msg, &mut p)?;
     Ok(clean_html(&p.html))
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::clean_html;
+
+    #[test]
+    fn preserves_newsletter_layout_without_loading_stylesheets() {
+        let clean = clean_html(
+            r#"<table><tr><td align="center" style="padding:16px;background-color:gold;background-image:url(https://example.org/pixel)">Text</td></tr></table>"#,
+        );
+        assert!(clean.contains("padding:16px"));
+        assert!(clean.contains("background-color:gold"));
+        assert!(clean.contains("align=\"center\""));
+        assert!(!clean.contains("example.org"));
+    }
 }
