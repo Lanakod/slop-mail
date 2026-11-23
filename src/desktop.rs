@@ -49,7 +49,18 @@ pub fn notify_mail(
 ) -> Result<(), String> {
     let c = crate::store::db(&profile).map_err(|e| e.to_string())?;
     let (id,thread,address,subject):(i64,String,String,String)=c.query_row("SELECT m.id,m.thread,a.address,m.subject FROM arrivals n JOIN messages m ON m.id=n.message JOIN accounts a ON a.id=n.account WHERE a.id=?",[account],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(|e|e.to_string())?;
-    let title = format!("{address} · новых писем: {count}");
+    let mode = crate::api::run("notice_mode", &profile, serde_json::Value::Null)
+        .map_err(|e| e.to_string())?;
+    let title = if mode == "count" {
+        format!("Slop Mail · новых писем: {count}")
+    } else {
+        format!("{address} · новых писем: {count}")
+    };
+    let subject = if mode == "full" {
+        subject
+    } else {
+        "Открыть входящие".into()
+    };
     let open = move || {
         show_main(&app);
         let _ = app.emit(

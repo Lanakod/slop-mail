@@ -1,6 +1,6 @@
 {
   "name": "slop-mail",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -21,6 +21,7 @@
     "vite": "6.4.1"
   },
   "dependencies": {
+    "@fortawesome/free-solid-svg-icons": "6.7.2",
     "ical.js": "2.2.1",
     "papaparse": "5.7.1"
   }

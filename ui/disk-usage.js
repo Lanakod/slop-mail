@@ -35,6 +35,6 @@ export function diskReport(report) {
   return `<div class="disk-totals"><div>База профиля<strong>${size(report.database_bytes)}</strong></div>
       <div>Повторные копии вложений<strong>${size(report.duplicates)}</strong></div></div>
       <p class="hint">Размер базы включает индекс поиска и служебные файлы SQLite. Для одинаковых вложений во всех ящиках профиля первая копия исключена из объёма повторов.</p>
-      <h3>Почта по ящикам</h3>${accounts ? '<div class="disk-table"><table><thead><tr><th>Ящик</th><th>Текст и HTML</th><th>Вложения</th><th>Очередь SMTP</th><th>Итого</th></tr></thead><tbody>' + accounts + "</tbody></table></div>" : "<p>Почтовых ящиков пока нет.</p>"}
+      <h3>Открытые вложения · ${size(report.opened.bytes)}</h3><p>Самой старой копии ${report.opened.oldest} дн.</p><button id="clean-opened">Очистить неизменённые копии старше 7 дней</button><h3>Почта по ящикам</h3>${accounts ? '<div class="disk-table"><table><thead><tr><th>Ящик</th><th>Текст и HTML</th><th>Вложения</th><th>Очередь SMTP</th><th>Итого</th></tr></thead><tbody>' + accounts + "</tbody></table></div>" : "<p>Почтовых ящиков пока нет.</p>"}
       <h3>Самые тяжёлые письма</h3>${messages ? '<ol class="disk-messages">' + messages + "</ol>" : "<p>В профиле пока нет писем.</p>"}`;
 }

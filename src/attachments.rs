@@ -85,6 +85,48 @@ fn choose_application(path: &Path) -> Result<()> {
     );
     Ok(())
 }
+/// Only consider regular files directly inside Slop Mail's UUID directories.
+pub fn cache(c: &Connection, clean: bool) -> Result<serde_json::Value> {
+    let mut bytes = 0u64;
+    let mut removed = 0u64;
+    let mut oldest = 0u64;
+    if let Some(parent) = c.path().and_then(|p| Path::new(p).parent()) {
+        let root = parent.join("Opened");
+        if root.symlink_metadata().is_ok_and(|m| m.is_dir()) {
+            for entry in root.read_dir()? {
+                let dir = entry?;
+                if !dir.file_type()?.is_dir()
+                    || uuid::Uuid::parse_str(&dir.file_name().to_string_lossy()).is_err()
+                {
+                    continue;
+                }
+                for child in dir.path().read_dir()? {
+                    let file = child?;
+                    if !file.file_type()?.is_file() {
+                        continue;
+                    }
+                    let meta = file.metadata()?;
+                    let age = meta.modified()?.elapsed().unwrap_or_default().as_secs() / 86400;
+                    oldest = oldest.max(age);
+                    bytes += meta.len();
+                    if clean && age >= 7 {
+                        // Keep locally edited copies and files whose source was deleted.
+                        let data = std::fs::read(file.path())?;
+                        let stored:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM attachments WHERE length(data)=? AND data=?)",rusqlite::params![data.len(),data],|r|r.get(0))?;
+                        if stored && std::fs::remove_file(file.path()).is_ok() {
+                            removed += meta.len();
+                            bytes -= meta.len();
+                        }
+                    }
+                }
+                if clean {
+                    let _ = std::fs::remove_dir(dir.path());
+                }
+            }
+        }
+    }
+    Ok(serde_json::json!({"bytes":bytes,"removed":removed,"oldest":oldest}))
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,6 +138,29 @@ mod tests {
         assert_ne!(a, b);
         assert!(a.starts_with(tmp.path()) && b.starts_with(tmp.path()));
         assert_eq!(std::fs::read(a)?, b"a");
+        Ok(())
+    }
+    #[test]
+    fn cache_cleanup_preserves_changed_and_recent_files() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let c = Connection::open(dir.path().join("mail.sqlite"))?;
+        c.execute_batch(crate::store::SCHEMA)?;
+        c.execute("INSERT INTO attachments(data) VALUES(?)", [b"abc"])?;
+        let root = dir.path().join("Opened");
+        let old = materialize(&root, "old", b"abc")?;
+        let edited = materialize(&root, "edit", b"xyz")?;
+        let recent = materialize(&root, "new", b"abc")?;
+        for path in [&old, &edited] {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(path)?
+                .set_modified(
+                    std::time::SystemTime::now() - std::time::Duration::from_secs(86400 * 8),
+                )?;
+        }
+        assert_eq!(cache(&c, false)?["bytes"], 9);
+        assert_eq!(cache(&c, true)?["removed"], 3);
+        assert!(!old.exists() && edited.exists() && recent.exists());
         Ok(())
     }
     #[cfg(target_os = "macos")]

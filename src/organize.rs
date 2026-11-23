@@ -4,7 +4,7 @@ use rusqlite::{params, Connection, TransactionBehavior};
 use serde_json::{json, Value};
 
 pub fn migrate(c: &Connection) -> Result<()> {
-    if c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))? >= 3 {
+    if c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))? >= 4 {
         return Ok(());
     }
     let t = rusqlite::Transaction::new_unchecked(c, TransactionBehavior::Immediate)?;
@@ -19,7 +19,10 @@ pub fn migrate(c: &Connection) -> Result<()> {
     CREATE VIEW IF NOT EXISTS mail_items AS SELECT m.*,coalesce(v.destination,m.folder) AS shown_folder,
     (SELECT group_concat(label,', ') FROM labels WHERE message=m.id) AS labels FROM messages m LEFT JOIN moves v ON v.message=m.id;
     CREATE TABLE IF NOT EXISTS sent_copies(job TEXT PRIMARY KEY REFERENCES queue(id),folder TEXT,error TEXT NOT NULL DEFAULT '');
-    PRAGMA user_version=3;")?;
+    CREATE TABLE IF NOT EXISTS mailbox_display(account TEXT PRIMARY KEY,icon TEXT NOT NULL DEFAULT 'envelope',last_attempt INTEGER,last_ok INTEGER,problem TEXT NOT NULL DEFAULT '');
+    CREATE TABLE IF NOT EXISTS profile_preferences(key TEXT PRIMARY KEY,value TEXT);
+    CREATE INDEX IF NOT EXISTS attachment_message ON attachments(message);
+    PRAGMA user_version=4;")?;
     t.commit()?;
     Ok(())
 }

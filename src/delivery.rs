@@ -42,6 +42,8 @@ pub struct Compose {
     pub parent: Option<i64>,
     #[serde(default)]
     pub files: Vec<PathBuf>,
+    #[serde(default)]
+    pub forwarded: Vec<i64>,
     pub slot: String,
 }
 pub fn recipients(s: &str) -> Result<Vec<lettre::Address>> {
@@ -107,6 +109,14 @@ pub fn enqueue_batch(
             ),
             std::fs::read(path)?,
         ));
+    }
+    for id in d.forwarded {
+        let (name, data): (String, Vec<u8>) = c
+            .query_row("SELECT name,data FROM attachments WHERE id=?", [id], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .context("Исходное вложение больше не доступно")?;
+        files.push((mime::safe_name(&name), data));
     }
     let t = c.transaction()?;
     let count = groups.len();

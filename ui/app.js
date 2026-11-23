@@ -1,3 +1,4 @@
+import { accountIcon, iconOptions } from "./account-icons.js";
 import { diskReport } from "./disk-usage.js";
 import { updateChecks } from "./updates.js";
 import { richEditor } from "./rich-editor.js";
@@ -81,8 +82,9 @@ const accountOptions = (v) =>
 function profileDialog() {
   modal(
     "Профили",
-    '<label>Название нового профиля<input id="pname" placeholder="Работа" autofocus></label><div class="actions"><button id="pdefault" class="accent">Создать в стандартной папке</button><button id="pcustom">Выбрать папку…</button></div><hr><button id="popen">Открыть существующий профиль…</button>',
+    '<label>Название нового профиля<input id="pname" placeholder="Работа" autofocus></label><div class="actions"><button id="pdefault" class="accent">Создать в стандартной папке</button><button id="pcustom">Выбрать папку…</button></div><hr><button id="popen">Открыть существующий профиль…</button><button id="prestore">Восстановить копию…</button>',
   );
+  click("prestore", restoreBackup);
   for (const [button, fresh, def] of [
     ["pdefault", true, true],
     ["pcustom", true, false],
@@ -97,6 +99,13 @@ function profileDialog() {
         await loadProfiles(p.id);
       }
     });
+}
+async function restoreBackup() {
+  const profile = await api("restore_backup");
+  if (profile) {
+    shut();
+    await loadProfiles(profile.id);
+  }
 }
 async function loadProfiles(prefer) {
   let profiles = await api("profiles");
@@ -141,12 +150,16 @@ async function switchProfile() {
   status("Открытие профиля…");
   await api("resume_work", {}, active);
   const data = await Promise.all(
-    ["accounts", "folders", "contacts", "saved_searches"].map((op) =>
-      api(op, {}, active),
-    ),
+    [
+      "accounts",
+      "folders",
+      "contacts",
+      "saved_searches",
+      "mailbox_display",
+    ].map((op) => api(op, {}, active)),
   );
   if (pid !== active) return;
-  [accounts, folders, people, savedSearches] = data;
+  [accounts, folders, people, savedSearches, mailboxDisplay] = data;
   renderNav();
   renderFilters();
   await list();
@@ -164,6 +177,36 @@ const views = {
   files: "▧ С вложениями",
   drafts: "✎ Черновики",
 };
+let mailboxDisplay = [];
+const liveSync = new Set(),
+  backgroundSync = new Set();
+let nextPoll = 0;
+if (!composeContext) {
+  window.__TAURI__.event
+    .listen(
+      "mail-progress",
+      action(async ({ payload }) => {
+        if (payload.profile !== pid) return;
+        const key = pid + "/" + payload.account;
+        if (payload.busy) backgroundSync.add(key);
+        else backgroundSync.delete(key);
+        if (payload.busy) renderNav();
+        else await refreshFolders();
+      }),
+    )
+    .catch(err);
+  window.__TAURI__.event
+    .listen(
+      "mail-next-poll",
+      action(({ payload }) => {
+        if (payload.profile === pid) {
+          nextPoll = payload.stamp;
+          renderNav();
+        }
+      }),
+    )
+    .catch(err);
+}
 function renderNav() {
   let html = '<button data-index="-1">▤　Вся почта</button>';
   for (const [id, label] of Object.entries(views)) {
@@ -187,7 +230,21 @@ function renderNav() {
     })
     .catch(err);
   accounts.forEach((a, i) => {
-    html += `<div class="accountname"><button data-account="${i}" title="${h(a.address)}">▣　${h(a.name || a.address)} ${badge(totals[i])}</button><button data-edit="${i}" title="Настройки ящика">⚙</button></div>`;
+    const details = mailboxDisplay.find((row) => row.account === a.id);
+    const next =
+      prefs.minutes && nextPoll
+        ? "Следующий опрос: " + date(nextPoll)
+        : prefs.minutes
+          ? "Автопроверка включена"
+          : "Только вручную";
+    const syncText =
+      liveSync.has(pid + "/" + a.id) || backgroundSync.has(pid + "/" + a.id)
+        ? "Получение…"
+        : details?.problem ||
+          (details?.last_ok
+            ? "Получено " + date(details.last_ok)
+            : "Ещё не проверялся");
+    html += `<div class="accountname"><button data-account="${i}" title="${h(a.address)}">${accountIcon(details?.icon)}　${h(a.name || a.address)} ${badge(totals[i])}</button><button data-edit="${i}" title="Настройки ящика">⚙</button></div><small class="mailbox-state" title="${h([details?.last_ok ? "Последний успех: " + date(details.last_ok) : "", next].filter(Boolean).join(" · "))}">${h(syncText)}</small>`;
     folders.forEach((f, j) => {
       if (f.account === a.id)
         html += `<button class="folder" data-index="${j}">▱　${h(f.name)} ${badge(f.unread)}</button>`;
@@ -361,7 +418,7 @@ async function openThread(key, hit) {
   await draftWrites;
   const token = ++readerVersion;
   activeMessage = hit;
-  const data = await api("thread", { thread: key, hit });
+  const data = await api("thread", { thread: key, hit, summary: true });
   if (token !== readerVersion) return;
   const last = data.at(-1);
   if (!last) return false;
@@ -369,8 +426,8 @@ async function openThread(key, hit) {
   $("reader").innerHTML =
     `<div class="readerhead"><button id="back">← Список</button><h1>${h(last.subject || "Без темы")}</h1></div><div id="timeline" class="timeline"></div><div id="quick"></div>`;
   click("back", () => document.body.classList.remove("reading"));
-  for (const m of data) {
-    const files = await api("attachments", { id: m.id });
+  function bubble(m) {
+    const files = m.files;
     if (token !== readerVersion) return;
     const body = chatBody(m);
     let art = document.createElement("article");
@@ -453,6 +510,28 @@ async function openThread(key, hit) {
         btn(el, label, () => api("file", { id: f.id, action: type }));
       art.querySelector(".parts").append(el);
     }
+    btn(actions, "Переслать", async () => {
+      const slot = "new:" + crypto.randomUUID();
+      const draft = {
+        slot,
+        account: m.account,
+        to: "",
+        cc: "",
+        bcc: "",
+        subject: "Fwd: " + m.subject,
+        body:
+          "\n\nПересылаемое сообщение\nОт: " +
+          m.sender +
+          "\nТема: " +
+          m.subject +
+          "\n\n" +
+          m.body,
+        files: [],
+        storedFiles: files.map(({ id, name }) => ({ id, name })),
+      };
+      await api("save_draft", { slot, data: draft });
+      await compose("", slot);
+    });
     btn(actions, "Ответить", () => composer($("quick"), m, false, true));
     btn(actions, "Ответить всем", () => composer($("quick"), m, true, true));
     btn(actions, "Удалить локально", async () => {
@@ -465,8 +544,63 @@ async function openThread(key, hit) {
         document.body.classList.remove("reading");
       }
     });
-    $("timeline").append(art);
+    return art;
   }
+  const timeline = $("timeline");
+  const focus = hit ? data.findIndex((m) => m.id === hit) : data.length - 1;
+  let start = Math.max(0, Math.min(focus - 20, data.length - 40)),
+    end = Math.min(start + 40, data.length);
+  const earlier = document.createElement("button"),
+    later = document.createElement("button");
+  earlier.textContent = "Предыдущие письма";
+  later.textContent = "Следующие письма";
+  timeline.append(earlier, later);
+  function buttons() {
+    earlier.hidden = start === 0;
+    later.hidden = end === data.length;
+  }
+  async function page(from, to, before) {
+    const items = data.slice(from, to);
+    const rows = await api("thread_bodies", {
+      thread: key,
+      ids: items.map((m) => m.id),
+    });
+    if (token !== readerVersion) return;
+    const bodies = new Map(rows.map((row) => [row.id, row]));
+    const fragment = document.createDocumentFragment();
+    for (const m of items)
+      if (bodies.has(m.id))
+        fragment.append(bubble({ ...m, ...bodies.get(m.id) }));
+    timeline.insertBefore(fragment, before);
+  }
+  earlier.onclick = action(async () => {
+    earlier.disabled = true;
+    try {
+      const next = Math.max(0, start - 40);
+      const anchor = earlier.nextElementSibling;
+      const top = anchor.getBoundingClientRect().top;
+      await page(next, start, anchor);
+      start = next;
+      buttons();
+      timeline.scrollTop += anchor.getBoundingClientRect().top - top;
+    } finally {
+      earlier.disabled = false;
+    }
+  });
+  later.onclick = action(async () => {
+    later.disabled = true;
+    try {
+      const next = Math.min(data.length, end + 40);
+      await page(end, next, later);
+      end = next;
+      buttons();
+    } finally {
+      later.disabled = false;
+    }
+  });
+  buttons();
+  await page(start, end, later);
+  if (token !== readerVersion) return;
   await composer($("quick"), last, false, false);
   if (token !== readerVersion) return;
   const target = $("msg" + (hit || last.id));
@@ -530,7 +664,7 @@ function accountDialog(edit) {
     `<fieldset><legend>${title}</legend>${serverFields(k, s)}<div class="grid">${input(k + "login", "Логин", k === "in" ? a.login : a.smtp_login)}${input(k + "pass", "Пароль", "", "password")}</div><button id="test${k}">Проверить соединение</button></fieldset>`;
   modal(
     edit ? "Настройки ящика" : "Подключить ящик",
-    `<div class="grid">${input("aname", "Имя отправителя", a.name)}${input("address", "Email", a.address, "email")}</div><div class="actions"><button id="discover">Найти настройки по email</button><select id="applypreset" aria-label="Применить шаблон">${options([["", "Шаблон подключения…"], ...prefs.presets.map((p) => [p.id, p.name])], "")}</select></div>${server("in", "Входящая почта", a.incoming)}<label class="check"><input id="keep" type="checkbox" ${a.keep ? "checked" : ""}> POP3 · Оставлять письма на сервере</label>${server("out", "Исходящая почта", a.outgoing)}<label class="check"><input id="remember" type="checkbox" ${localStorage.getItem("remember:" + pid + ":" + a.id) !== "false" ? "checked" : ""}> Запомнить пароли на этом компьютере</label><label>Подпись<textarea id="signature">${h(a.signature)}</textarea></label><button id="saveaccount" class="accent">Сохранить ящик</button>`,
+    `<label>Иконка ящика · Font Awesome<select id="mail-icon">${options(iconOptions, mailboxDisplay.find((row) => row.account === a.id)?.icon || "envelope")}</select></label><div class="grid">${input("aname", "Имя отправителя", a.name)}${input("address", "Email", a.address, "email")}</div><div class="actions"><button id="discover">Найти настройки по email</button><select id="applypreset" aria-label="Применить шаблон">${options([["", "Шаблон подключения…"], ...prefs.presets.map((p) => [p.id, p.name])], "")}</select></div>${server("in", "Входящая почта", a.incoming)}<label class="check"><input id="keep" type="checkbox" ${a.keep ? "checked" : ""}> POP3 · Оставлять письма на сервере</label>${server("out", "Исходящая почта", a.outgoing)}<label class="check"><input id="remember" type="checkbox" ${localStorage.getItem("remember:" + pid + ":" + a.id) !== "false" ? "checked" : ""}> Запомнить пароли на этом компьютере</label><label>Подпись<textarea id="signature">${h(a.signature)}</textarea></label><button id="saveaccount" class="accent">Сохранить ящик</button>`,
   );
   bindPorts();
   const dialogNode = $("discover");
@@ -565,6 +699,7 @@ function accountDialog(edit) {
         incoming: endpoint("in"),
         outgoing: endpoint("out"),
       },
+      icon: $("mail-icon").value,
       remember: $("remember").checked,
       in: $("inpass").value,
       out: $("outpass").value,
@@ -613,6 +748,7 @@ async function composer(
       ? await api("reply", { id: parent.id, all })
       : draft?.to || initialTo;
   if (!host.isConnected || active !== pid) return;
+  const storedFiles = [...(draft?.storedFiles || [])];
   let files = draft?.files || [],
     parentId = retarget ? parent?.id : draft?.parent || parent?.id || null;
   const q = (k) => host.querySelector('[data-field="' + k + '"]');
@@ -667,10 +803,22 @@ async function composer(
       (/^re:/i.test(parent.subject) ? parent.subject : "Re: " + parent.subject),
     ...editor.value(),
     signature,
+    forwarded: storedFiles.map((f) => f.id),
+    storedFiles: [...storedFiles],
     files: [...files],
   });
   const renderFiles = () => {
     q("files").replaceChildren();
+    storedFiles.forEach((f, i) => {
+      const button = document.createElement("button");
+      button.textContent = f.name + " ×";
+      button.onclick = () => {
+        storedFiles.splice(i, 1);
+        renderFiles();
+        save();
+      };
+      q("files").append(button);
+    });
     files.forEach((f, i) => {
       let b = document.createElement("button");
       b.textContent = basename(f) + " ×";
@@ -683,7 +831,9 @@ async function composer(
     });
   };
   const hasContent = (draft) =>
-    draft.files.length > 0 || draft.body.replace(/[\s\u200b]/gu, "").length > 0;
+    draft.files.length > 0 ||
+    draft.forwarded.length > 0 ||
+    draft.body.replace(/[\s\u200b]/gu, "").length > 0;
   let previewVersion = 0;
   const preview = async () => {
     let version = ++previewVersion;
@@ -760,6 +910,7 @@ async function composer(
       if (!hasContent(d)) return;
       if (
         !d.files.length &&
+        !d.forwarded.length &&
         /во вложении|прикладываю|прикрепляю|attached|see attachment/i.test(
           d.body,
         ) &&
@@ -903,9 +1054,13 @@ async function bulk(key, ids, profile) {
 }
 async function refreshFolders() {
   const active = pid;
-  const data = await api("folders");
+  const [data, display] = await Promise.all([
+    api("folders"),
+    api("mailbox_display"),
+  ]);
   if (active === pid) {
     folders = data;
+    mailboxDisplay = display;
     renderNav();
   }
 }
@@ -918,6 +1073,8 @@ async function synchronize(active) {
     $("threads").innerHTML = empty("Первичное получение почты…");
   for (const a of batch) {
     if (pid !== active) break;
+    liveSync.add(active + "/" + a.id);
+    renderNav();
     status("Получение почты · " + a.address);
     try {
       const count = await api("sync", { account: a.id }, active);
@@ -929,6 +1086,8 @@ async function synchronize(active) {
         });
     } catch (e) {
       errors.push(a.address + " · " + String(e));
+    } finally {
+      liveSync.delete(active + "/" + a.id);
     }
   }
   if (syncProfile === active) syncProfile = "";
@@ -1154,6 +1313,8 @@ if (!composeContext)
     )
     .catch(err);
 function schedule() {
+  nextPoll = 0;
+  backgroundSync.clear();
   return window.__TAURI__.core
     .invoke("set_schedule", {
       profile: pid,
@@ -1221,7 +1382,9 @@ click(
     api,
     schedule,
     showChanges,
-    showDiskUsage: async (back) => {
+    restoreBackup,
+    hasProfile: () => !!pid,
+    showDiskUsage: async function view(back) {
       modal(
         "Место на диске",
         '<button id="disk-back">← Настройки</button><div id="disk-results" role="status"></div>',
@@ -1239,6 +1402,12 @@ click(
         const report = await api("disk_usage", {}, profile);
         if (!host.isConnected || pid !== profile) return;
         host.innerHTML = diskReport(report);
+        click("clean-opened", async () => {
+          if (await ask("Удалить неизменённые открытые копии старше 7 дней?")) {
+            await api("clean_opened", {}, profile);
+            await view(back);
+          }
+        });
         for (const button of host.querySelectorAll("[data-message]")) {
           button.onclick = action(async () => {
             const message = report.largest[Number(button.dataset.message)];

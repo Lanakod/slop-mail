@@ -8,6 +8,12 @@ Slop Mail is a local-first desktop mail client that presents email threads as co
 
 Lanakod develops Slop Mail together with OpenAI Codex, from shaping features to writing code and testing releases. The name **Slop Mail** is a wink at that collaboration.
 
+## Profile backups and upgrades
+
+Opening a 0.5.2 profile upgrades its database transactionally. Settings can save a verified SQLite snapshot. Restore creates a separate profile and pauses outgoing messages that were still in progress. Passwords, opened-file caches, and external files referenced by drafts are outside the snapshot. To keep a pre-upgrade copy, quit 0.5.2 and copy the whole profile directory before updating.
+
+Mailbox icons use Font Awesome Free by Fonticons, Inc. [Icon license](https://fontawesome.com/license/free)
+
 ## First delivery
 
 1. Download the DMG for Apple Silicon Macs or the installer for 64-bit Windows. On macOS, drag Slop Mail into Applications. [GitHub Releases](https://github.com/Lanakod/slop-mail/releases/latest)

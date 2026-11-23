@@ -1,7 +1,7 @@
 <p align="center"><img src="icons/icon.png" width="100" height="100" alt="Кремовый конверт с киноварным клапаном на тёмно-зелёном фоне"></p>
 
 <h1 align="center">Slop Mail</h1>
-<p align="center"><samp>АВИАПОЧТА · ВЕРСИЯ 0.5.2 · macOS / Windows</samp></p>
+<p align="center"><samp>АВИАПОЧТА · ВЕРСИЯ 0.6.0 · macOS / Windows</samp></p>
 <p align="center"><a href="README.md">English</a> · Русский</p>
 <p align="center"><a href="https://github.com/Lanakod/slop-mail/releases/latest"><img alt="Последний релиз" src="https://img.shields.io/github/v/release/Lanakod/slop-mail"></a> <a href="https://github.com/Lanakod/slop-mail/actions/workflows/desktop.yml"><img alt="Сборки клиента" src="https://img.shields.io/github/actions/workflow/status/Lanakod/slop-mail/desktop.yml?branch=master"></a> <a href="https://github.com/Lanakod/slop-mail/blob/master/LICENSE"><img alt="Лицензия MIT" src="https://img.shields.io/badge/license-MIT-456e55"></a></p>
 <p align="center"><a href="https://github.com/Lanakod/slop-mail/releases/latest"><b>Скачать клиент</b></a>　·　<a href="#первое-письмо">Подключить ящик</a>　·　<a href="#мастерская">Собрать из исходников</a></p>
@@ -9,6 +9,12 @@
 Slop Mail хранит почту на вашем компьютере и показывает переписку как разговор. Слева — ящики и папки, посередине — ветки писем, справа — открытая переписка и поле быстрого ответа. После синхронизации можно отключиться от сети, найти письмо по тексту, открыть вложение и подготовить ответ.
 
 Lanakod разрабатывает Slop Mail вместе с OpenAI Codex. Вместе мы проектируем функции, пишем код и проверяем релизы. Название **Slop Mail** — шутка об этом соавторстве.
+
+## Копии и обновление профиля
+
+При открытии профиля 0.5.2 клиент обновляет схему базы в транзакции. Чтобы оставить копию до перехода, полностью закройте 0.5.2 и скопируйте папку профиля. В настройках 0.6.0 можно сохранить проверенный снимок SQLite и восстановить его как отдельный профиль. Активные исходящие письма приостанавливаются. Пароли, кеш и внешние файлы, прикреплённые к черновикам, в снимок не входят.
+
+Значки ящиков — Font Awesome Free от Fonticons, Inc. [Лицензия](https://fontawesome.com/license/free)
 
 ## Первое письмо
 

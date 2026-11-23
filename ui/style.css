@@ -778,3 +778,5 @@ body.compose-window > header, body.compose-window > main, body.compose-window > 
 .disk-messages li + li { margin-top: 4px; }
 .disk-messages button { width: 100%; display: flex; justify-content: space-between; text-align: left; align-items: center; gap: 12px; }
 .disk-messages span { overflow-wrap: anywhere; }
+.mailbox-state {display:block; padding:0 8px 5px; color:var(--muted); overflow-wrap:anywhere;}
+.accountname svg {vertical-align:middle;}

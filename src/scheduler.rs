@@ -82,6 +82,10 @@ pub fn set_schedule(
         task.push(tauri::async_runtime::spawn(async move {
             let interval = Duration::from_secs(u64::from(minutes) * 60);
             loop {
+                let _ = app.emit(
+                    "mail-next-poll",
+                    json!({"profile":profile,"stamp":store::now()+interval.as_secs() as i64}),
+                );
                 tokio::time::sleep(interval).await;
                 let result = check(&app, &profile, notify).await;
                 let _ = app.emit(
@@ -118,10 +122,16 @@ async fn check_account(
     account: &Account,
     notify: bool,
 ) -> Result<(), String> {
-    let count = api::execute("sync".into(), profile.into(), json!({"account":account.id}))
-        .await?
-        .as_u64()
-        .unwrap_or_default() as usize;
+    let _ = app.emit(
+        "mail-progress",
+        json!({"profile":profile,"account":account.id,"busy":true}),
+    );
+    let result = api::execute("sync".into(), profile.into(), json!({"account":account.id})).await;
+    let _ = app.emit(
+        "mail-progress",
+        json!({"profile":profile,"account":account.id,"busy":false}),
+    );
+    let count = result?.as_u64().unwrap_or_default() as usize;
     if count > 0 && notify {
         desktop::notify_mail(app.clone(), profile.into(), account.id.clone(), count)?;
     }

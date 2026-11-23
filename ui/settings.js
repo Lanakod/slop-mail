@@ -76,11 +76,14 @@ export function settingsMenu({
   flush,
   rules,
   showChanges,
+  restoreBackup,
+  hasProfile = () => true,
   showDiskUsage,
   updates,
 }) {
   async function settings() {
     const about = await api("about");
+    const mode = hasProfile() ? await api("notice_mode") : "full";
     modal(
       "Настройки",
       `<div class="listhead"><strong>Slop Mail</strong><span>Версия ${h(about.version)}</span></div>
@@ -97,11 +100,19 @@ export function settingsMenu({
         prefs.minutes,
       )}</select></label>
       <label class="check"><input id="instant" type="checkbox" ${prefs.instant ? "checked" : ""} ${prefs.minutes ? "" : "disabled"}> Получать сразу при поддержке IMAP IDLE</label>
-      <label class="check"><input id="notify" type="checkbox" ${prefs.notify ? "checked" : ""}> Системные уведомления о новых письмах</label></fieldset>
+      <label class="check"><input id="notify" type="checkbox" ${prefs.notify ? "checked" : ""}> Системные уведомления о новых письмах</label><label>Содержание уведомлений профиля<select id="notice-mode" ${hasProfile() ? "" : "disabled"}>${options(
+        [
+          ["full", "Ящик, количество и тема"],
+          ["account", "Ящик и количество"],
+          ["count", "Только количество"],
+        ],
+        mode,
+      )}</select></label></fieldset>
       <fieldset><legend>Шаблоны подключения</legend><select id="presetlist" aria-label="Шаблон">${options(
         prefs.presets.map((x) => [x.id, x.name]),
         null,
       )}</select><div class="actions"><button id="newpreset">Создать</button><button id="editpreset" ${prefs.presets.length ? "" : "disabled"}>Изменить</button><button id="delpreset" ${prefs.presets.length ? "" : "disabled"}>Удалить</button></div></fieldset>
+      <fieldset><legend>Резервная копия профиля</legend><p>В копию входят письма, вложения и черновики. Пароли, кеш и внешние файлы черновиков сохраняются отдельно. Восстановление создаёт новый профиль и приостанавливает исходящие письма.</p><button id="backup-save" ${hasProfile() ? "" : "disabled"}>Сохранить копию…</button><button id="backup-open">Восстановить…</button><span id="backup-result" role="status"></span></fieldset>
       <button id="disk-usage">Место на диске</button><button id="changes-show">История изменений</button><button id="mail-rules">Правила для входящих</button><fieldset><legend>Обновления Slop Mail</legend>
       <label>Проверять новые версии<select id="update-hours">${options(
         [
@@ -136,6 +147,15 @@ export function settingsMenu({
       schedule();
     };
     click("disk-usage", () => showDiskUsage(settings));
+    get("notice-mode").onchange = () =>
+      api("set_notice_mode", { mode: get("notice-mode").value });
+    click("backup-open", restoreBackup);
+    click("backup-save", async () => {
+      await flush();
+      const label = get("backup-result");
+      if (await api("save_backup"))
+        label.textContent = " Копия проверена и сохранена";
+    });
     click("changes-show", () => showChanges(about));
     click("mail-rules", rules);
     click("newpreset", () => edit(null));

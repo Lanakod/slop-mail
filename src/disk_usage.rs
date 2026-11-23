@@ -72,6 +72,6 @@ pub fn report(c: &mut Connection) -> Result<Value> {
     }
     tx.commit()?;
     Ok(
-        json!({"accounts":accounts,"largest":largest,"duplicates":duplicates,"database_bytes":database_bytes}),
+        json!({"accounts":accounts,"largest":largest,"duplicates":duplicates,"database_bytes":database_bytes,"opened":crate::attachments::cache(c,false)?}),
     )
 }

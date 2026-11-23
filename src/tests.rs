@@ -194,6 +194,7 @@ fn compose(a: &store::Account, to: &str, personal: bool, parent: Option<i64>) ->
         signature: a.signature.clone(),
         personal,
         parent,
+        forwarded: Vec::new(),
         files: vec![],
         slot: "test".into(),
     }
@@ -857,5 +858,65 @@ fn disk_usage_counts_bytes_and_redundant_copies_across_mailboxes() -> Result<()>
     assert_eq!(r["largest"][0]["id"], 1);
     assert_eq!(r["largest"][0]["bytes"], 16);
     assert!(r["database_bytes"].as_u64().unwrap() > 0);
+    Ok(())
+}
+
+#[test]
+fn restore_052_snapshot_as_independent_profile_with_paused_queue() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let source = store::register(dir.path(), Some("Old"))?;
+    let c = store::db(&source.id)?;
+    c.execute_batch(
+        "DROP TABLE mailbox_display;DROP TABLE profile_preferences;PRAGMA user_version=3;
+        INSERT INTO queue(id,state) VALUES('task','pending');
+        INSERT INTO drafts(slot,data) VALUES('saved','{}');",
+    )?;
+    let file = dir.path().join("snapshot.slopbackup");
+    backup::save(&c, &file)?;
+    let restored = backup::restore(&file)?;
+    assert_ne!(restored.id, source.id);
+    let copy = store::db(&restored.id)?;
+    assert_eq!(
+        copy.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))?,
+        4
+    );
+    assert_eq!(
+        copy.query_row("SELECT state FROM queue", [], |r| r.get::<_, String>(0))?,
+        "unknown"
+    );
+    assert_eq!(
+        copy.query_row("SELECT count(*) FROM drafts", [], |r| r.get::<_, i64>(0))?,
+        1
+    );
+    assert_eq!(
+        c.query_row("SELECT state FROM queue", [], |r| r.get::<_, String>(0))?,
+        "pending"
+    );
+    Ok(())
+}
+
+#[test]
+fn forward_attachment_without_original_path_or_recipients() -> Result<()> {
+    let mut c = database()?;
+    let a = account(&mut c)?;
+    let tx = c.transaction()?;
+    let parent = mime::save(&tx, &a.id, "INBOX", "1", LETTER.as_bytes(), false, false)?;
+    tx.execute(
+        "INSERT INTO attachments(message,name,data) VALUES(?,'note.txt',?)",
+        rusqlite::params![parent, b"forwarded bytes"],
+    )?;
+    let file = tx.last_insert_rowid();
+    tx.commit()?;
+    let mut d = compose(&a, "reader@example.org", false, None);
+    d.forwarded = vec![file];
+    delivery::enqueue(&mut c, d)?;
+    let raw: Vec<u8> = c.query_row("SELECT raw FROM queue", [], |r| r.get(0))?;
+    let mail = mailparse::parse_mail(&raw)?;
+    assert_eq!(
+        mail.subparts.last().unwrap().get_body_raw()?,
+        b"forwarded bytes"
+    );
+    assert!(mail.headers.get_first_value("In-Reply-To").is_none());
+    assert!(mail.headers.get_first_value("Bcc").is_none());
     Ok(())
 }

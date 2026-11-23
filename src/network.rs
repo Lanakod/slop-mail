@@ -700,6 +700,7 @@ fn live_pop_smtp() -> Result<()> {
             personal: false,
             parent: None,
             signature: String::new(),
+            forwarded: Vec::new(),
             files: vec![],
             slot: "live-test".into(),
             subject: "Проверка Slop Mail".into(),

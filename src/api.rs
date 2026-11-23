@@ -64,6 +64,15 @@ pub(crate) fn run(op: &str, pid: &str, a: Value) -> Result<Value> {
                 if new { Some(s("name")) } else { None }
             )?));
         }
+        "restore_backup" => {
+            let Some(path) = rfd::FileDialog::new()
+                .add_filter("Slop Mail", &["sqlite", "slopbackup"])
+                .pick_file()
+            else {
+                return Ok(Value::Null);
+            };
+            return Ok(json!(crate::backup::restore(&path)?));
+        }
         "pick" => {
             return Ok(json!(rfd::FileDialog::new()
                 .pick_files()
@@ -73,6 +82,11 @@ pub(crate) fn run(op: &str, pid: &str, a: Value) -> Result<Value> {
     }
     let mut c = store::db(pid)?;
     match op {
+        "save_backup"=>{let Some(path)=rfd::FileDialog::new().set_file_name("Slop-Mail.slopbackup").save_file() else{return Ok(Value::Null)};crate::backup::save(&c,&path)?;Ok(json!(true))}
+        "mailbox_display"=>store::rows(&c,"SELECT * FROM mailbox_display",&[]),
+        "notice_mode"=>Ok(json!(c.query_row("SELECT value FROM profile_preferences WHERE key='notice'",[],|r|r.get::<_,String>(0)).optional()?.unwrap_or_else(||"full".into()))),
+        "set_notice_mode"=>{ensure!(matches!(s("mode"),"full"|"account"|"count"),"Режим уведомлений");c.execute("INSERT OR REPLACE INTO profile_preferences VALUES('notice',?)",[s("mode")])?;Ok(Value::Null)}
+        "clean_opened"=>Ok(json!(crate::attachments::cache(&c,true)?)),
         "disk_usage" => crate::disk_usage::report(&mut c),
         "resume_work"=>Ok(Value::Null),
         "deadlines"=>store::rows(&c,"SELECT DISTINCT due,'deliver' AS op FROM send_holds UNION SELECT DISTINCT due,'apply_moves' FROM moves UNION SELECT DISTINCT until,'wake_due' FROM snoozes",&[]),
@@ -94,13 +108,17 @@ pub(crate) fn run(op: &str, pid: &str, a: Value) -> Result<Value> {
                 }
                 store::save_account(&mut c,&mut acc)?;
             }
-            Ok(json!(acc.id))
+            c.execute("INSERT INTO mailbox_display(account,icon) VALUES(?,?) ON CONFLICT(account) DO UPDATE SET icon=excluded.icon",params![acc.id,a["icon"].as_str().unwrap_or("envelope")])?;
+                Ok(json!(acc.id))
         }
         "sync" => {
             let _guard = SYNC.lock().map_err(|_| anyhow::anyhow!("Ошибка синхронизации"))?;
             let acc = store::account(&c, s("account"))?;
-            let pw = network::secret(pid, &acc, "in")?;
-            Ok(json!(network::sync(&mut c, &acc, &pw)?))
+            c.execute("INSERT INTO mailbox_display(account,last_attempt) VALUES(?,unixepoch()) ON CONFLICT(account) DO UPDATE SET last_attempt=unixepoch(),problem=''",[&acc.id])?;
+            let result=network::secret(pid,&acc,"in").and_then(|pw|network::sync(&mut c,&acc,&pw));
+            let problem=if result.is_ok(){""}else{"Ошибка получения. Проверьте подключение и настройки ящика."};
+            c.execute("UPDATE mailbox_display SET problem=?1,last_ok=CASE WHEN ?1='' THEN unixepoch() ELSE last_ok END WHERE account=?2",params![problem,acc.id])?;
+            Ok(json!(result?))
         }
         "folders" => store::rows(&c, "WITH names AS (SELECT account,name FROM folders UNION SELECT account,shown_folder FROM mail_items), counts AS (SELECT account,shown_folder,count(*) AS unread FROM mail_items WHERE seen=0 GROUP BY account,shown_folder) SELECT n.account,n.name,coalesce(c.unread,0) AS unread FROM names n LEFT JOIN counts c ON n.account=c.account AND n.name=c.shown_folder ORDER BY 1,2",&[]),
         "bulk"=>crate::organize::bulk(&mut c,&a),
@@ -126,6 +144,7 @@ pub(crate) fn run(op: &str, pid: &str, a: Value) -> Result<Value> {
             c.execute("UPDATE messages SET seen=?1,pending_seen=1 WHERE thread=?2 AND seen<>?1 AND id IN (SELECT value FROM json_each(?3))",params![seen,s("thread"),serde_json::to_string(&ids)?])?;
             Ok(Value::Null)
         }
+        "thread_bodies"=>store::rows(&c,"SELECT id,body,html FROM messages WHERE thread=? AND id IN (SELECT value FROM json_each(?))",&[&s("thread"),&a["ids"].to_string()]),
         "thread" => {
             let t = c.transaction()?;
             t.execute("UPDATE messages SET seen=1,pending_seen=1 WHERE thread=? AND id=? AND seen=0", params![s("thread"),a["hit"].as_i64()])?;
@@ -137,7 +156,7 @@ pub(crate) fn run(op: &str, pid: &str, a: Value) -> Result<Value> {
                     FROM messages m JOIN sent_copies c ON c.job=m.uid
                     WHERE m.thread=?1 AND c.folder IS NOT NULL
                 ), ranked AS (
-                    SELECT m.*,c.folder AS copy_folder,c.job IS NOT NULL AND c.folder IS NULL AS copy_pending,
+                    SELECT m.id,m.account,m.folder,m.thread,m.stamp,m.subject,m.sender,m.recipients,m.reply_to,m.outgoing,CASE WHEN NOT ?3 THEN m.body END AS body,CASE WHEN NOT ?3 THEN m.html END AS html,c.folder AS copy_folder,c.job IS NOT NULL AND c.folder IS NULL AS copy_pending,
                         row_number() OVER (
                             PARTITION BY COALESCE(pair.job,CAST(m.id AS TEXT))
                             ORDER BY (m.id IS ?2) DESC,(m.uid=pair.job) DESC,m.id
@@ -150,7 +169,11 @@ pub(crate) fn run(op: &str, pid: &str, a: Value) -> Result<Value> {
                 SELECT id,account,folder,thread,stamp,subject,sender,recipients,reply_to,body,html,outgoing,
                     copy_folder,copy_pending,EXISTS(SELECT 1 FROM stars WHERE message=ranked.id) AS starred
                 FROM ranked WHERE position=1 ORDER BY stamp,id",
-                &[&s("thread"), &a["hit"].as_i64()])?;
+                &[&s("thread"), &a["hit"].as_i64(), &(a["summary"]==true)])?;
+            let attachments=store::rows(&t,"SELECT a.message,a.id,a.name,a.mime,a.cid,length(a.data) AS size FROM messages m JOIN attachments a ON a.message=m.id WHERE m.thread=? ORDER BY a.id",&[&s("thread")])?;
+            let mut grouped=std::collections::HashMap::<i64,Vec<Value>>::new();
+            for f in attachments.as_array().unwrap(){grouped.entry(f["message"].as_i64().unwrap()).or_default().push(f.clone());}
+            for m in data.as_array_mut().unwrap(){m["files"]=json!(grouped.remove(&m["id"].as_i64().unwrap()).unwrap_or_default());}
             t.commit()?;
             for m in data.as_array_mut().unwrap(){m["authors"]=crate::book::participants(m["sender"].as_str().unwrap_or(""));m["addressees"]=crate::book::participants(m["recipients"].as_str().unwrap_or(""));}
             Ok(data)
