@@ -763,3 +763,18 @@ body.compose-window > header, body.compose-window > main, body.compose-window > 
 #changes-text li + li { margin-top: 7px; }
 .changes-footer { justify-content: flex-end; border-top: 1px solid var(--line); }
 #update-alert { border-color: var(--active); }
+
+.disk-totals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.disk-totals > div { background: var(--rail); padding: 14px; border: 1px solid var(--line); border-radius: 4px; }
+.disk-totals strong { display: block; margin-top: 6px; font: bold 24px Georgia, serif; }
+#disk-back { justify-self: start; }
+.disk-table { overflow-x: auto; }
+.disk-table table { width: 100%; border-collapse: collapse; }
+.disk-table td, .disk-table th { padding: 8px; text-align: right; border-bottom: 1px solid var(--line); }
+.disk-table th:first-child { text-align: left; overflow-wrap: anywhere; }
+.disk-table td, .disk-messages b { white-space: nowrap; font-variant-numeric: tabular-nums; }
+#disk-results small { display: block; color: var(--muted); font-weight: normal; }
+.disk-messages { padding-left: 2em; }
+.disk-messages li + li { margin-top: 4px; }
+.disk-messages button { width: 100%; display: flex; justify-content: space-between; text-align: left; align-items: center; gap: 12px; }
+.disk-messages span { overflow-wrap: anywhere; }

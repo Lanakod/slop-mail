@@ -834,3 +834,28 @@ fn rich_message_preserves_both_bodies_and_attachment() -> Result<()> {
     assert_eq!(mail.subparts[1].get_body_raw()?, b"attachment");
     Ok(())
 }
+
+#[test]
+fn disk_usage_counts_bytes_and_redundant_copies_across_mailboxes() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut c = Connection::open(dir.path().join("mail.sqlite"))?;
+    c.execute_batch(store::SCHEMA)?;
+    c.execute_batch("
+        INSERT INTO accounts(id,address) VALUES ('a','a@example.org'),('b','b@example.org'),('c','empty@example.org');
+        INSERT INTO messages(id,account,folder,uid,body,html) VALUES
+            (1,'a','INBOX','1','Я','<b>x</b>'),(2,'b','INBOX','1','y',NULL);
+        INSERT INTO attachments(message,name,data) VALUES
+            (1,'first',x'010203'),(1,'first',x'030201'),(2,'renamed',x'010203'),(2,'third',x'010203');
+        INSERT INTO queue(id,account,raw) VALUES('out','b',zeroblob(20));")?;
+    let r = disk_usage::report(&mut c)?;
+    assert_eq!(r["duplicates"], 6);
+    assert_eq!(r["accounts"][0]["address"], "b@example.org");
+    assert_eq!(r["accounts"][0]["queue_bytes"], 20);
+    assert_eq!(r["accounts"][1]["text_bytes"], 10);
+    assert_eq!(r["accounts"][1]["file_bytes"], 6);
+    assert_eq!(r["accounts"][2]["file_bytes"], 0);
+    assert_eq!(r["largest"][0]["id"], 1);
+    assert_eq!(r["largest"][0]["bytes"], 16);
+    assert!(r["database_bytes"].as_u64().unwrap() > 0);
+    Ok(())
+}

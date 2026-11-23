@@ -5,6 +5,7 @@ mod book;
 mod delivery;
 mod desktop;
 mod discovery;
+mod disk_usage;
 mod mime;
 mod network;
 mod organize;

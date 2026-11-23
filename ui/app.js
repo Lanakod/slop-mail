@@ -1,3 +1,4 @@
+import { diskReport } from "./disk-usage.js";
 import { updateChecks } from "./updates.js";
 import { richEditor } from "./rich-editor.js";
 import { chatBody, mailtoDraft } from "./mail-links.js";
@@ -1220,6 +1221,36 @@ click(
     api,
     schedule,
     showChanges,
+    showDiskUsage: async (back) => {
+      modal(
+        "Место на диске",
+        '<button id="disk-back">← Настройки</button><div id="disk-results" role="status"></div>',
+      );
+      $("dialog").classList.add("wide");
+      click("disk-back", back);
+      const host = $("disk-results");
+      if (!pid) {
+        host.textContent = "Откройте профиль для просмотра статистики.";
+        return;
+      }
+      const profile = pid;
+      host.textContent = "Подсчёт данных профиля…";
+      try {
+        const report = await api("disk_usage", {}, profile);
+        if (!host.isConnected || pid !== profile) return;
+        host.innerHTML = diskReport(report);
+        for (const button of host.querySelectorAll("[data-message]")) {
+          button.onclick = action(async () => {
+            const message = report.largest[Number(button.dataset.message)];
+            shut();
+            await openThread(message.thread, message.id);
+          });
+        }
+      } catch (error) {
+        if (host.isConnected)
+          host.textContent = "Не удалось подсчитать размер: " + error;
+      }
+    },
     updates,
     rules: rulesPanel({ api, modal, click, action }),
     flush: () => draftWrites,

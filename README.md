@@ -38,6 +38,8 @@ Closing the main window keeps Slop Mail running. On Windows, reopen it from the 
 
 ## Your mail archive
 
+Open **Settings → Место на диске** to see mailbox sizes, the ten largest messages and how much space repeated attachments occupy.
+
 Each profile has its own `mail.sqlite` database for messages, attachments, contacts, drafts, the delivery queue and full-text search. Saved passwords use macOS Keychain or Windows Credential Manager. You can also keep credentials in memory for the current session.
 
 | System | Default data directory |

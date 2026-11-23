@@ -73,6 +73,7 @@ pub(crate) fn run(op: &str, pid: &str, a: Value) -> Result<Value> {
     }
     let mut c = store::db(pid)?;
     match op {
+        "disk_usage" => crate::disk_usage::report(&mut c),
         "resume_work"=>Ok(Value::Null),
         "deadlines"=>store::rows(&c,"SELECT DISTINCT due,'deliver' AS op FROM send_holds UNION SELECT DISTINCT due,'apply_moves' FROM moves UNION SELECT DISTINCT until,'wake_due' FROM snoozes",&[]),
         "wake_due"=>{c.execute("DELETE FROM snoozes WHERE until<=unixepoch()",[])?;Ok(Value::Null)}

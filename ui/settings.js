@@ -76,6 +76,7 @@ export function settingsMenu({
   flush,
   rules,
   showChanges,
+  showDiskUsage,
   updates,
 }) {
   async function settings() {
@@ -101,7 +102,7 @@ export function settingsMenu({
         prefs.presets.map((x) => [x.id, x.name]),
         null,
       )}</select><div class="actions"><button id="newpreset">Создать</button><button id="editpreset" ${prefs.presets.length ? "" : "disabled"}>Изменить</button><button id="delpreset" ${prefs.presets.length ? "" : "disabled"}>Удалить</button></div></fieldset>
-      <button id="changes-show">История изменений</button><button id="mail-rules">Правила для входящих</button><fieldset><legend>Обновления Slop Mail</legend>
+      <button id="disk-usage">Место на диске</button><button id="changes-show">История изменений</button><button id="mail-rules">Правила для входящих</button><fieldset><legend>Обновления Slop Mail</legend>
       <label>Проверять новые версии<select id="update-hours">${options(
         [
           [0, "Только вручную"],
@@ -134,6 +135,7 @@ export function settingsMenu({
       persist();
       schedule();
     };
+    click("disk-usage", () => showDiskUsage(settings));
     click("changes-show", () => showChanges(about));
     click("mail-rules", rules);
     click("newpreset", () => edit(null));

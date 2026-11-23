@@ -1,7 +1,7 @@
 <p align="center"><img src="icons/icon.png" width="100" height="100" alt="Кремовый конверт с киноварным клапаном на тёмно-зелёном фоне"></p>
 
 <h1 align="center">Slop Mail</h1>
-<p align="center"><samp>АВИАПОЧТА · ВЕРСИЯ 0.5.1 · macOS / Windows</samp></p>
+<p align="center"><samp>АВИАПОЧТА · ВЕРСИЯ 0.5.2 · macOS / Windows</samp></p>
 <p align="center"><a href="README.md">English</a> · Русский</p>
 <p align="center"><a href="https://github.com/Lanakod/slop-mail/releases/latest"><img alt="Последний релиз" src="https://img.shields.io/github/v/release/Lanakod/slop-mail"></a> <a href="https://github.com/Lanakod/slop-mail/actions/workflows/desktop.yml"><img alt="Сборки клиента" src="https://img.shields.io/github/actions/workflow/status/Lanakod/slop-mail/desktop.yml?branch=master"></a> <a href="https://github.com/Lanakod/slop-mail/blob/master/LICENSE"><img alt="Лицензия MIT" src="https://img.shields.io/badge/license-MIT-456e55"></a></p>
 <p align="center"><a href="https://github.com/Lanakod/slop-mail/releases/latest"><b>Скачать клиент</b></a>　·　<a href="#первое-письмо">Подключить ящик</a>　·　<a href="#мастерская">Собрать из исходников</a></p>
@@ -53,6 +53,8 @@ Lanakod разрабатывает Slop Mail вместе с OpenAI Codex. Вм�
 При включённой автоматической проверке клиент слушает папку INBOX через IMAP IDLE, если сервер поддерживает эту команду. Новое письмо запускает получение сразу, в том числе при скрытом окне. Проверка входящего IMAP-соединения в настройках ящика показывает доступность IDLE после входа. Настройка **Получать сразу при поддержке IMAP IDLE** включена по умолчанию. Для POP3 и при разрыве соединения действует выбранный интервал. Режим **Только вручную** отключает оба способа автоматической проверки.
 
 ## Почтовый архив
+
+В **Настройки → Место на диске** видны размеры ящиков, десять самых тяжёлых писем и объём повторных копий вложений. Нажмите на письмо, чтобы открыть переписку.
 
 Локальный профиль содержит базу SQLite с письмами, вложениями, полнотекстовым индексом, контактами, настройками и очередью. Пароли можно сохранить в **macOS Keychain** или **Windows Credential Manager**. При отключённом запоминании они доступны до выхода из клиента.
 
