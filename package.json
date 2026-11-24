@@ -18,7 +18,7 @@
     "jsdom": "26.1.0",
     "prettier": "3.6.2",
     "typescript": "5.9.3",
-    "vite": "6.4.1"
+    "vite": "6.4.5"
   },
   "dependencies": {
     "@fortawesome/free-solid-svg-icons": "6.7.2",
