@@ -29,6 +29,7 @@ test("composer preserves typed text, recipient visibility and sender signature a
     body: "",
   };
   let drop;
+  let observedStamp = "12:100";
   let draft = null,
     closeWindow,
     savedOnClose;
@@ -86,6 +87,8 @@ test("composer preserves typed text, recipient visibility and sender signature a
               : [];
           case "draft":
             return draft?.slot === args.slot ? draft : null;
+          case "file_stamps":
+            return args.paths.map(() => observedStamp);
           case "save_draft":
             draft = args.data;
             return;
@@ -126,6 +129,12 @@ test("composer preserves typed text, recipient visibility and sender signature a
   await tick();
   assert.equal(q("send").disabled, false);
   assert.deepEqual(draft.files, ["/tmp/test.txt"]);
+  assert.equal(draft.fileStamps["/tmp/test.txt"], observedStamp);
+  observedStamp = "13:200";
+  await q("send").onclick();
+  await tick();
+  assert.match(q("files").textContent, /Файл изменился/);
+  assert.equal(q("send").disabled, true);
   q("body").textContent = "Saved before hiding";
   q("body").dispatchEvent(new w.Event("input", { bubbles: true }));
   let prevented = false;

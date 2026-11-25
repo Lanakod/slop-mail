@@ -59,7 +59,7 @@ Incoming and outgoing connections support TLS and required STARTTLS (STLS for PO
 
 ## Workshop
 
-The client uses Rust, Tauri 2, SQLite FTS5 and JavaScript. Development uses Rust 1.95 and Node.js 22.20. On macOS, install Xcode Command Line Tools. On Windows, use the MSVC Rust toolchain, Windows SDK, WebView2 and the Visual Studio Build Tools workload **Desktop development with C++**.
+The client uses Rust, Tauri 2, SQLite FTS5 and JavaScript. Development uses Rust 1.95 and Node.js 22.22.2. On macOS, install Xcode Command Line Tools. On Windows, use the MSVC Rust toolchain, Windows SDK, WebView2 and the Visual Studio Build Tools workload **Desktop development with C++**.
 
 ```sh
 npm ci

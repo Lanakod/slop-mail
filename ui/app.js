@@ -415,7 +415,7 @@ async function list() {
       q ? "Ничего не найдено" : "В папке пока нет писем",
     );
 }
-async function openThread(key, hit) {
+async function openThread(key, hit, replyAll = false) {
   await draftWrites;
   const token = ++readerVersion;
   activeMessage = hit;
@@ -600,7 +600,8 @@ async function openThread(key, hit) {
   buttons();
   await page(start, end, later);
   if (token !== readerVersion) return;
-  await composer($("quick"), last, false, false);
+  const recipientMessage = replyAll ? data.find((m) => m.id === hit) : last;
+  await composer($("quick"), recipientMessage || last, replyAll, replyAll);
   if (token !== readerVersion) return;
   const target = $("msg" + (hit || last.id));
   target?.scrollIntoView({ block: "nearest" });
@@ -752,6 +753,8 @@ async function composer(
       ? await api("reply", { id: parent.id, all })
       : draft?.to || initialTo;
   if (!host.isConnected || active !== pid) return;
+  const stamps = new Map(Object.entries(draft?.fileStamps || {}));
+  const issues = new Map();
   const storedFiles = [...(draft?.storedFiles || [])];
   let files = draft?.files || [],
     parentId = retarget ? parent?.id : draft?.parent || parent?.id || null;
@@ -809,8 +812,30 @@ async function composer(
     signature,
     forwarded: storedFiles.map((f) => f.id),
     storedFiles: [...storedFiles],
+    fileStamps: Object.fromEntries(stamps),
     files: [...files],
   });
+  async function inspectFiles(paths) {
+    if (!paths.length) return;
+    const observed = await api("file_stamps", { paths }, active);
+    paths.forEach((path, i) => {
+      if (!files.includes(path)) return;
+      const stamp = observed[i];
+      issues.delete(path);
+      if (!stamp) issues.set(path, "Файл недоступен");
+      else if (stamps.has(path) && stamps.get(path) !== stamp)
+        issues.set(path, "Файл изменился");
+      else stamps.set(path, stamp);
+    });
+  }
+  async function addFiles(paths) {
+    files = [...new Set([...files, ...paths])];
+    save();
+    await inspectFiles(paths);
+    if (!editorRoot.isConnected) return;
+    renderFiles();
+    save();
+  }
   const renderFiles = () => {
     q("files").replaceChildren();
     storedFiles.forEach((f, i) => {
@@ -825,9 +850,26 @@ async function composer(
     });
     files.forEach((f, i) => {
       let b = document.createElement("button");
+      if (issues.has(f)) {
+        const warning = document.createElement("span");
+        warning.textContent = issues.get(f) + " · " + basename(f) + " ";
+        const replace = document.createElement("button");
+        replace.textContent = "Выбрать замену";
+        replace.onclick = action(async () => {
+          const picked = await api("pick");
+          if (!picked.length) return;
+          files = files.filter((path) => path !== f);
+          stamps.delete(f);
+          issues.delete(f);
+          await addFiles(picked);
+        });
+        q("files").append(warning, replace);
+      }
       b.textContent = basename(f) + " ×";
       b.onclick = () => {
         files.splice(i, 1);
+        stamps.delete(f);
+        issues.delete(f);
         renderFiles();
         save();
       };
@@ -854,7 +896,7 @@ async function composer(
           to.length +
           " · " +
           (d.personal ? "Каждый видит только свой адрес" : visibility(targets));
-      q("send").disabled = !to.length || !hasContent(d);
+      q("send").disabled = !to.length || !hasContent(d) || issues.size > 0;
     } catch {
       if (version === previewVersion)
         q("preview").textContent = "Укажите адреса получателей через запятую";
@@ -887,6 +929,11 @@ async function composer(
       save();
     };
   q("signature").textContent = signature;
+  const editorRoot = q("body");
+  const baselineCount = stamps.size;
+  await inspectFiles([...files]);
+  if (!editorRoot.isConnected || active !== pid) return;
+  if (stamps.size !== baselineCount) save();
   renderFiles();
   preview();
   if (
@@ -894,16 +941,8 @@ async function composer(
     (!draft && (initialTo || composeContext?.body || composeContext?.subject))
   )
     save();
-  host.ondropfiles = (paths) => {
-    files = [...new Set([...files, ...paths])];
-    renderFiles();
-    save();
-  };
-  q("attach").onclick = action(async () => {
-    files.push(...(await api("pick")));
-    renderFiles();
-    save();
-  });
+  host.ondropfiles = action(addFiles);
+  q("attach").onclick = action(async () => addFiles(await api("pick")));
   let submitting = false;
   q("send").onclick = action(async () => {
     if (submitting) return;
@@ -911,6 +950,12 @@ async function composer(
     try {
       await draftWrites;
       const d = data();
+      await inspectFiles([...files]);
+      if (issues.size) {
+        renderFiles();
+        preview();
+        return;
+      }
       if (!hasContent(d)) return;
       if (
         !d.files.length &&
@@ -922,9 +967,7 @@ async function composer(
           "В тексте упоминается вложение. Добавить файл перед отправкой?",
         ))
       ) {
-        files.push(...(await api("pick")));
-        renderFiles();
-        save();
+        await addFiles(await api("pick"));
         return;
       }
       let targets = await api("recipient_plan", d, active);
@@ -1236,9 +1279,94 @@ $("search").oninput = () => {
   clearTimeout(timer);
   timer = setTimeout(action(list), 120);
 };
+function openCommands() {
+  if (composeContext || document.querySelector("dialog[open]")) return;
+  const previous = document.activeElement;
+  const commands = [
+    ...mailList.commands(),
+    { name: "Написать письмо", run: () => compose() },
+    {
+      name: "Поиск писем",
+      run: () => {
+        $("search").focus();
+      },
+    },
+    { name: "Настройки", run: () => $("settings").click() },
+  ];
+  modal(
+    "Быстрые действия",
+    '<input id="command-search" aria-label="Найти действие" placeholder="Найти действие"><div id="command-list"></div>',
+  );
+  const dialog = $("dialog"),
+    input = $("command-search"),
+    list = $("command-list");
+  dialog.addEventListener(
+    "close",
+    () => {
+      if (
+        !dialog.open &&
+        document.activeElement === document.body &&
+        previous instanceof HTMLElement &&
+        previous.isConnected
+      )
+        previous.focus();
+    },
+    { once: true },
+  );
+  function render() {
+    list.replaceChildren();
+    for (const cmd of commands.filter((cmd) =>
+      cmd.name.toLowerCase().includes(input.value.trim().toLowerCase()),
+    )) {
+      const b = document.createElement("button");
+      b.textContent = cmd.name;
+      b.onclick = action(async () => {
+        shut();
+        if (previous instanceof HTMLElement) previous.focus();
+        await cmd.run();
+      });
+      list.append(b);
+    }
+    if (!list.children.length) list.textContent = "Действий не найдено";
+  }
+  input.oninput = render;
+  const controller = new AbortController();
+  dialog.addEventListener("close", () => controller.abort(), { once: true });
+  $("content").addEventListener(
+    "keydown",
+    function navigate(e) {
+      if (!input.isConnected) return;
+      const buttons = Array.from(list.querySelectorAll("button")),
+        idx = buttons.indexOf(document.activeElement);
+      if (e.key === "Enter" && e.target === input) {
+        e.preventDefault();
+        buttons[0]?.click();
+      }
+      if (buttons.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+        e.preventDefault();
+        buttons[
+          idx < 0
+            ? e.key === "ArrowDown"
+              ? 0
+              : buttons.length - 1
+            : (idx + (e.key === "ArrowDown" ? 1 : -1) + buttons.length) %
+              buttons.length
+        ].focus();
+      }
+    },
+    { signal: controller.signal },
+  );
+  render();
+  input.focus();
+}
 document.addEventListener("keydown", (e) => {
   if (!(e.metaKey || e.ctrlKey)) return;
   const key = e.key.toLowerCase();
+  if (key === "k" && !composeContext) {
+    e.preventDefault();
+    openCommands();
+    return;
+  }
   if (key === "enter") {
     e.preventDefault();
     const host = composeContext

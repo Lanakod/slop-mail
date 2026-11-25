@@ -1,7 +1,7 @@
 <p align="center"><img src="icons/icon.png" width="100" height="100" alt="Кремовый конверт с киноварным клапаном на тёмно-зелёном фоне"></p>
 
 <h1 align="center">Slop Mail</h1>
-<p align="center"><samp>АВИАПОЧТА · ВЕРСИЯ 0.6.1 · macOS / Windows</samp></p>
+<p align="center"><samp>АВИАПОЧТА · ВЕРСИЯ 0.6.2 · macOS / Windows</samp></p>
 <p align="center"><a href="README.md">English</a> · Русский</p>
 <p align="center"><a href="https://github.com/Lanakod/slop-mail/releases/latest"><img alt="Последний релиз" src="https://img.shields.io/github/v/release/Lanakod/slop-mail"></a> <a href="https://github.com/Lanakod/slop-mail/actions/workflows/desktop.yml"><img alt="Сборки клиента" src="https://img.shields.io/github/actions/workflow/status/Lanakod/slop-mail/desktop.yml?branch=master"></a> <a href="https://github.com/Lanakod/slop-mail/blob/master/LICENSE"><img alt="Лицензия MIT" src="https://img.shields.io/badge/license-MIT-456e55"></a></p>
 <p align="center"><a href="https://github.com/Lanakod/slop-mail/releases/latest"><b>Скачать клиент</b></a>　·　<a href="#первое-письмо">Подключить ящик</a>　·　<a href="#мастерская">Собрать из исходников</a></p>
@@ -82,7 +82,7 @@ IMAP учитывает UID и UIDVALIDITY папки. POP3 запоминает
 
 ## Мастерская
 
-Rust, Tauri 2, SQLite FTS5 и интерфейс на JavaScript. Для разработки используются Rust 1.95 и Node.js 22.20. На macOS нужны Xcode Command Line Tools. На Windows — Rust MSVC, Windows SDK, WebView2 и компонент **Desktop development with C++** в Visual Studio Build Tools.
+Rust, Tauri 2, SQLite FTS5 и интерфейс на JavaScript. Для разработки используются Rust 1.95 и Node.js 22.22.2. На macOS нужны Xcode Command Line Tools. На Windows — Rust MSVC, Windows SDK, WebView2 и компонент **Desktop development with C++** в Visual Studio Build Tools.
 
 ```sh
 npm ci

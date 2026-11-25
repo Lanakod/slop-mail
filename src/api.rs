@@ -73,6 +73,21 @@ pub(crate) fn run(op: &str, pid: &str, a: Value) -> Result<Value> {
             };
             return Ok(json!(crate::backup::restore(&path)?));
         }
+        "file_stamps" => {
+            let paths: Vec<String> = serde_json::from_value(a["paths"].clone())?;
+            return Ok(json!(paths
+                .into_iter()
+                .map(|path| {
+                    let meta = std::fs::metadata(path).ok().filter(|m| m.is_file())?;
+                    let time = meta
+                        .modified()
+                        .ok()?
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .ok()?;
+                    Some(format!("{}:{}", meta.len(), time.as_nanos()))
+                })
+                .collect::<Vec<_>>()));
+        }
         "pick" => {
             return Ok(json!(rfd::FileDialog::new()
                 .pick_files()
@@ -131,7 +146,8 @@ pub(crate) fn run(op: &str, pid: &str, a: Value) -> Result<Value> {
         "save_search"=>{ensure!(!s("q").trim().is_empty(),"Введите запрос");c.execute("INSERT OR IGNORE INTO saved_searches VALUES(?)",[s("q").trim()])?;Ok(Value::Null)}
         "drop_search"=>{c.execute("DELETE FROM saved_searches WHERE query=?",[s("q")])?;Ok(Value::Null)}
         "rules"=>store::rows(&c,"SELECT * FROM rules ORDER BY id",&[]),
-        "save_rule"=>{let pattern=s("pattern").trim();ensure!(!pattern.is_empty() && (!s("label").trim().is_empty()||!s("folder").is_empty()||a["quiet"]==true),"Укажите отправителя и действие");if !s("folder").is_empty(){crate::organize::valid_folder(s("folder"))?;}
+        "save_rule" | "preview_rule"=>{let pattern=s("pattern").trim();ensure!(!pattern.is_empty() && (!s("label").trim().is_empty()||!s("folder").is_empty()||a["quiet"]==true),"Укажите отправителя и действие");if !s("folder").is_empty(){crate::organize::valid_folder(s("folder"))?;}
+            if op=="preview_rule"{return crate::organize::preview_rule(&c,pattern);}
             c.execute("INSERT INTO rules(pattern,label,destination,quiet) VALUES(?,?,?,?)",params![pattern,s("label").trim(),s("folder").trim(),a["quiet"]==true])?;Ok(Value::Null)}
         "drop_rule"=>{c.execute("DELETE FROM rules WHERE id=?",[n("id")])?;Ok(Value::Null)}
         "restore_links"=>{crate::network::restore_links(&c,pid,n("id"))?;Ok(Value::Null)}

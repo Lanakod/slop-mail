@@ -27,6 +27,30 @@ pub fn migrate(c: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn matches_sender(addresses: &[String], pattern: &str) -> bool {
+    addresses.iter().any(|addr| {
+        addr.eq_ignore_ascii_case(pattern)
+            || addr
+                .rsplit_once('@')
+                .is_some_and(|(_, d)| d.eq_ignore_ascii_case(pattern.trim_start_matches('@')))
+    })
+}
+
+pub fn preview_rule(c: &Connection, pattern: &str) -> Result<Value> {
+    let mut stmt=c.prepare("SELECT sender,subject FROM messages WHERE outgoing=0 AND folder='INBOX' COLLATE NOCASE ORDER BY stamp DESC,id DESC LIMIT 500")?;
+    let mut rows = stmt.query([])?;
+    let mut hits = Vec::new();
+    while let Some(row) = rows.next()? {
+        let sender: String = row.get(0)?;
+        if matches_sender(&crate::delivery::addresses(&sender), pattern) {
+            hits.push(json!({"sender":sender,"subject":row.get::<_,String>(1)?}));
+            if hits.len() == 10 {
+                break;
+            }
+        }
+    }
+    Ok(json!(hits))
+}
 pub fn arrived(c: &Connection, id: i64, account: &str) -> Result<bool> {
     let (sender, thread, seen): (String, String, bool) = c.query_row(
         "SELECT sender,thread,seen FROM messages WHERE id=?",
@@ -40,12 +64,7 @@ pub fn arrived(c: &Connection, id: i64, account: &str) -> Result<bool> {
     let mut rows = rules.query([])?;
     while let Some(r) = rows.next()? {
         let pattern: String = r.get(0)?;
-        if !addresses.iter().any(|addr| {
-            addr.eq_ignore_ascii_case(&pattern)
-                || addr
-                    .rsplit_once('@')
-                    .is_some_and(|(_, d)| d.eq_ignore_ascii_case(pattern.trim_start_matches('@')))
-        }) {
+        if !matches_sender(&addresses, &pattern) {
             continue;
         }
         let label: String = r.get(1)?;

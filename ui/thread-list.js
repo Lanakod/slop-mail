@@ -3,6 +3,7 @@ import { escapeHtml as h } from "./helpers.js";
 export function threadList({ api, action, date, open, refresh, bulk }) {
   const expanded = new Set();
   let menu = null;
+  let commands = () => [];
   function closeMenu() {
     menu?.remove();
     menu = null;
@@ -24,6 +25,62 @@ export function threadList({ api, action, date, open, refresh, bulk }) {
     let lastSelected = null;
     const targets = new WeakMap();
     const visible = () => Array.from(host.querySelectorAll(".mail-row"));
+    function commandsFor(chosen) {
+      if (!chosen.length) return [];
+      return [
+        ["read", "Отметить прочитанным"],
+        ["unread", "Отметить непрочитанным"],
+        ["star", "Поставить звезду"],
+        ["archive", "В архив"],
+        ["trash", "В корзину"],
+        ["move", "Переместить в папку…"],
+        ["snooze", "Отложить до…"],
+        ["wake", "Вернуть сейчас"],
+      ]
+        .filter(([key]) => key !== "wake" || filters.view === "snoozed")
+        .map(([key, name]) => ({
+          name,
+          run: async () => {
+            const batches = await Promise.all(
+              chosen.map((b) => {
+                const { m, group } = targets.get(b);
+                return group
+                  ? api("list", { ...filters, branch: m.thread }, profile)
+                  : [m];
+              }),
+            );
+            const ids = [...new Set(batches.flat().map((row) => row.id))];
+            if (chosen.length === 1 && ["read", "unread"].includes(key)) {
+              await api(
+                "mark_seen",
+                {
+                  thread: targets.get(chosen[0]).m.thread,
+                  ids,
+                  seen: key === "read",
+                },
+                profile,
+              );
+              await refresh();
+            } else await bulk(key, ids, profile);
+          },
+        }));
+    }
+    commands = () => {
+      const picked = visible().filter((b) => selected.has(b));
+      const current =
+        visible().find((b) => b === document.activeElement) ||
+        visible().find((b) => b.classList.contains("active"));
+      const chosen = picked.length ? picked : current ? [current] : [];
+      const commands = commandsFor(chosen);
+      if (chosen.length === 1) {
+        const { m } = targets.get(chosen[0]);
+        commands.push({
+          name: "Ответить всем",
+          run: () => open(m.thread, m.id, true),
+        });
+      }
+      return commands;
+    };
     function context(event, node, m, group) {
       event.preventDefault();
       closeMenu();
@@ -41,40 +98,14 @@ export function threadList({ api, action, date, open, refresh, bulk }) {
             ? "Письма ветки в этом списке"
             : "Письмо";
       menu.append(title);
-      for (const [key, name] of [
-        ["read", "Отметить прочитанным"],
-        ["unread", "Отметить непрочитанным"],
-        ["star", "Поставить звезду"],
-        ["archive", "В архив"],
-        ["trash", "В корзину"],
-        ["move", "Переместить в папку…"],
-        ["snooze", "Отложить до…"],
-        ["wake", "Вернуть сейчас"],
-      ]) {
-        if (key === "wake" && filters.view !== "snoozed") continue;
+      for (const { name, run } of commandsFor(chosen)) {
         const b = document.createElement("button");
         b.type = "button";
         b.setAttribute("role", "menuitem");
         b.textContent = name;
         b.onclick = action(async () => {
           closeMenu();
-          const batches = await Promise.all(
-            chosen.map((b) => {
-              const { m, group } = targets.get(b);
-              return group
-                ? api("list", { ...filters, branch: m.thread }, profile)
-                : [m];
-            }),
-          );
-          const ids = [...new Set(batches.flat().map((row) => row.id))];
-          if (chosen.length === 1 && ["read", "unread"].includes(key)) {
-            await api(
-              "mark_seen",
-              { thread: m.thread, ids, seen: key === "read" },
-              profile,
-            );
-            await refresh();
-          } else await bulk(key, ids, profile);
+          await run();
         });
         menu.append(b);
       }
@@ -178,7 +209,9 @@ export function threadList({ api, action, date, open, refresh, bulk }) {
   }
   return {
     render,
+    commands: () => commands(),
     reset() {
+      commands = () => [];
       expanded.clear();
       closeMenu();
     },

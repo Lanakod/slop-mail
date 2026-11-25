@@ -77,6 +77,10 @@ test("Shift range and Ctrl selection star exactly the visible selected messages"
   await buttons[0].onclick({ ctrlKey: true });
   await buttons[2].onclick({ shiftKey: true });
   await buttons[1].onclick({ metaKey: true });
+  const commands = view.commands();
+  assert.ok(!commands.some((c) => c.name === "Ответить всем"));
+  await commands.find((c) => c.name.startsWith("Отложить")).run();
+  assert.deepEqual(chosen, ["snooze", [1, 3], "work"]);
   buttons[2].dispatchEvent(
     new w.MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
   );

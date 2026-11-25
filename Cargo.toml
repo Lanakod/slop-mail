@@ -1,6 +1,6 @@
 [package]
 name = "slop-mail"
-version = "0.6.1"
+version = "0.6.2"
 edition = "2021"
 description = "Local-first desktop email client"
 license = "MIT"

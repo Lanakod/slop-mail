@@ -639,6 +639,19 @@ fn organize_messages_and_undo_before_delivery() -> Result<()> {
     )?;
     assert_eq!(run("list", json!({}))?, json!([]));
     assert_eq!(run("list", json!({"view":"snoozed"}))?[0]["id"], id);
+    let preview = run(
+        "preview_rule",
+        json!({"pattern":"@EXAMPLE.ORG","quiet":true}),
+    )?;
+    assert_eq!(preview.as_array().unwrap().len(), 1);
+    assert_eq!(run("rules", json!({}))?, json!([]));
+    assert_eq!(
+        run(
+            "preview_rule",
+            json!({"pattern":"other.example","quiet":true})
+        )?,
+        json!([])
+    );
     run(
         "save_rule",
         json!({"pattern":"example.org","label":"Проект","folder":"Orders","quiet":true}),
